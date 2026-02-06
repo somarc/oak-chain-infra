@@ -1,0 +1,109 @@
+#!/bin/bash
+set -e
+
+LOG_DIR="${LOG_DIR:-$HOME/oak-chain/logs}"
+VALIDATOR_URL="${VALIDATOR_URL:-http://localhost:8090}"
+
+mkdir -p "$LOG_DIR"
+
+WALLETS=(
+    "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb0"
+    "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed"
+    "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359"
+    "0xdbF03B407c01E7cD3CBea99509d93f8DDDC8C6FB"
+    "0xD1220A0cf47c7B9Be7A2E6BA89F429762e7b9aDb"
+    "0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199"
+    "0xdD870fA1b7C4700F2BD7f44238821C26f7392148"
+    "0x583031D1113aD414F02576BD6afaBfb302140225"
+    "0x4B0897b0513fdC7C541B6d9D7E929C4e5364D2dB"
+    "0x14723A09ACff6D2A60DcdF7aA4AFf308FDDC160C"
+    "0xCA35b7d915458EF540aDe6068dFe2F44E8fa733c"
+    "0x4826533B4897376654Bb4d4AD88B7faFD0C98528"
+    "0x617F2E2fD72FD9D5503197092aC168c91465E7f2"
+    "0x17F6AD8Ef982297579C203069C1DbfFE4348c372"
+    "0x5c6B0f7Bf3E7ce046039Bd8FABdfD3f9F5021678"
+    "0x03C6FcED478cBbC9a4FAB34eF9f40767739D1Ff7"
+    "0x1aE0EA34a72D944a8C7603FfB3eC30a6669E454C"
+    "0x0A098Eda01Ce92ff4A4CCb7A4fFFb5A43EBC70DC"
+    "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf"
+    "0x2B5AD5c4795c026514f8317c7a215E218DcCD6cF"
+    "0x9B9cE5c49A15b9a0c8f4bB7c0D7e9B8b6f7A1B2c"
+    "0xA3bC7D9e0F1a2B3c4D5e6F708192A3b4C5d6E7f8"
+    "0xB4cD8E1f2A3b4C5d6E7f8091A2b3C4d5E6F7a8B9"
+    "0xC5dE9F2a3B4c5D6e7F8091A2b3C4d5E6F7a8B9c0"
+    "0xD6eF0A3b4C5d6E7f8091A2b3C4d5E6F7a8B9c0D1"
+    "0xE7f01B4c5D6e7F8091A2b3C4d5E6F7a8B9c0D1e2"
+    "0xF8012C5d6E7f8091A2b3C4d5E6F7a8B9c0D1e2F3"
+    "0x0123dE6f708192A3b4C5d6E7f8091A2b3C4d5E6F"
+    "0x13579Bdf2468ACE02468aCe13579bDF2468ACe02"
+    "0x2468ACE02468aCe13579bDF2468ACe02468aCe13"
+)
+
+BINARY_FILES=()
+
+init_binary_files() {
+    local workspace_root="$1"
+    local candidates=(
+        "${workspace_root}/do-it-live.jpeg"
+        "${workspace_root}/rickrubin.jpeg"
+        "${workspace_root}/oak-chain-docs/public/oak-chain-logo.jpeg"
+    )
+    BINARY_FILES=()
+    for path in "${candidates[@]}"; do
+        if [ -f "$path" ]; then
+            BINARY_FILES+=("$path")
+        fi
+    done
+}
+
+log_line() {
+    local log_file="$1"
+    shift
+    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$log_file"
+}
+
+random_hex() {
+    local bytes=$1
+    echo "0x$(openssl rand -hex "$bytes")"
+}
+
+random_int() {
+    local min=$1
+    local max=$2
+    echo $((RANDOM % (max - min + 1) + min))
+}
+
+pick_binary_file() {
+    local count=${#BINARY_FILES[@]}
+    if [ "$count" -eq 0 ]; then
+        echo ""
+        return
+    fi
+    local idx=$((RANDOM % count))
+    echo "${BINARY_FILES[$idx]}"
+}
+
+select_payment_tier() {
+    local standard_weight="${TIER_STANDARD_WEIGHT:-85}"
+    local express_weight="${TIER_EXPRESS_WEIGHT:-12}"
+    local priority_weight="${TIER_PRIORITY_WEIGHT:-3}"
+    local total=$((standard_weight + express_weight + priority_weight))
+    local rand=$((RANDOM % total))
+    if [ "$rand" -lt "$standard_weight" ]; then
+        echo "standard"
+    elif [ "$rand" -lt $((standard_weight + express_weight)) ]; then
+        echo "express"
+    else
+        echo "priority"
+    fi
+}
+
+register_client() {
+    local wallet=$1
+    local client_id=$2
+    curl -s -X POST "${VALIDATOR_URL}/v1/register-client" \
+        -H "Content-Type: application/x-www-form-urlencoded" \
+        -d "clientId=client-${client_id}" \
+        -d "clientUrl=http://client-${client_id}.local" \
+        -d "walletAddress=${wallet}" >/dev/null
+}

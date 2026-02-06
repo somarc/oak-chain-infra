@@ -1,0 +1,17 @@
+# macOS
+.DS_Store
+
+# logs/runtime artifacts
+*.log
+logs/
+
+# python
+__pycache__/
+*.pyc
+
+# node
+node_modules/
+
+# local env overrides
+*.local
+.env

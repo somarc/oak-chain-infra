@@ -1,0 +1,13 @@
+#!/bin/bash
+set -e
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TEST_NAME="smoke-one-write"
+TEST_DURATION_SECONDS=60
+NUM_CLIENTS=1
+MIN_WRITES_PER_CLIENT=1
+MAX_WRITES_PER_CLIENT=1
+BINARY_PERCENT=0
+VALIDATOR_BINARY_PERCENT=0
+REGISTER_CLIENTS=true
+
+source "$SCRIPT_DIR/run-load-test.sh"
