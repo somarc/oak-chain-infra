@@ -2,8 +2,17 @@
 set -euo pipefail
 
 HOST="${HOST:-http://localhost}"
-PORTS=(8091 8092 8093)
+CLUSTER_SIZE="${OAK_CLUSTER_SIZE:-3}"
+PORTS=()
 OPS_PROXY_URL="${OPS_PROXY_URL:-http://127.0.0.1:8787}"
+PREVENT_SLEEP_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/prevent-sleep.sh"
+CLUSTER_WALLET_FILE="${CLUSTER_WALLET_FILE:-$HOME/oak-chain/cluster-keystore.properties}"
+
+if [ "$CLUSTER_SIZE" = "5" ]; then
+  PORTS=(8090 8092 8094 8096 8098)
+else
+  PORTS=(8090 8092 8094)
+fi
 
 for port in "${PORTS[@]}"; do
   url="$HOST:$port/health"
@@ -39,4 +48,21 @@ if [ "$ops_code" = "200" ]; then
   echo "ops-proxy:UP url=$OPS_PROXY_URL"
 else
   echo "ops-proxy:DOWN url=$OPS_PROXY_URL http=$ops_code"
+fi
+
+if [ -f "$CLUSTER_WALLET_FILE" ]; then
+  wallet_addr="$(awk -F'=' '/^walletAddress=/{print $2}' "$CLUSTER_WALLET_FILE" | head -n 1)"
+  if [ -n "$wallet_addr" ]; then
+    echo "cluster-wallet:UP address=$wallet_addr"
+  else
+    echo "cluster-wallet:WARN file=$CLUSTER_WALLET_FILE missing-walletAddress"
+  fi
+else
+  echo "cluster-wallet:DOWN file=$CLUSTER_WALLET_FILE"
+fi
+
+if [ -x "$PREVENT_SLEEP_SCRIPT" ]; then
+  "$PREVENT_SLEEP_SCRIPT" status
+else
+  echo "sleep-prevention:UNAVAILABLE script-missing"
 fi

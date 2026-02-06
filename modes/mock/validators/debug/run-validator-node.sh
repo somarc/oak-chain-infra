@@ -7,8 +7,29 @@ set -e
 
 # Get script directory and find workspace root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Go up 4 levels: debug/ -> local-development/ -> scripts/ -> blockchain-aem-infra/ -> OAK/
-WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
+
+detect_workspace_root() {
+    if [ -n "${OAK_ROOT:-}" ] && [ -d "${OAK_ROOT}/jackrabbit-oak" ]; then
+        echo "$OAK_ROOT"
+        return
+    fi
+    local cursor="$SCRIPT_DIR"
+    while [ "$cursor" != "/" ]; do
+        if [ -d "$cursor/jackrabbit-oak" ]; then
+            echo "$cursor"
+            return
+        fi
+        cursor="$(dirname "$cursor")"
+    done
+    echo ""
+}
+
+WORKSPACE_ROOT="$(detect_workspace_root)"
+if [ -z "$WORKSPACE_ROOT" ]; then
+    echo "❌ ERROR: Could not locate OAK workspace root (missing jackrabbit-oak)."
+    echo "   Set OAK_ROOT explicitly and retry."
+    exit 1
+fi
 
 # Load environment variables from .env.local if it exists (for API keys, etc.)
 if [ -f "$WORKSPACE_ROOT/.env.local" ]; then
@@ -66,10 +87,26 @@ elif [ -f "jackrabbit-oak/oak-segment-agentic/target/oak-segment-agentic-${OAK_V
 fi
 
 NODE_ID=${1:-0}
+AERON_CLUSTER_SIZE="${OAK_CLUSTER_SIZE:-3}"
+if [ "$AERON_CLUSTER_SIZE" != "3" ] && [ "$AERON_CLUSTER_SIZE" != "5" ]; then
+    echo "⚠️  Invalid OAK_CLUSTER_SIZE=$AERON_CLUSTER_SIZE, defaulting to 3"
+    AERON_CLUSTER_SIZE="3"
+fi
 
-# Ports: 8091, 8092, 8093
-BASE_PORT=8091
-HTTP_PORT=$((BASE_PORT + NODE_ID))
+# Ports: 8090, 8092, 8094 (local mock cluster)
+if [ "$NODE_ID" -eq 0 ]; then
+    HTTP_PORT=8090
+elif [ "$NODE_ID" -eq 1 ]; then
+    HTTP_PORT=8092
+elif [ "$NODE_ID" -eq 2 ]; then
+    HTTP_PORT=8094
+elif [ "$NODE_ID" -eq 3 ]; then
+    HTTP_PORT=8096
+elif [ "$NODE_ID" -eq 4 ]; then
+    HTTP_PORT=8098
+else
+    HTTP_PORT=$((8090 + (NODE_ID * 2)))
+fi
 
 # Store directory for this node
 STORE_DIR="$HOME/oak-chain/validator-$NODE_ID"
@@ -85,29 +122,39 @@ LOG_FILE="$LOG_DIR/validator-$NODE_ID.log"
 # Aeron cluster configuration
 CLUSTER_BASE_PORT=9000
 AERON_DIR="$HOME/oak-chain/aeron-$NODE_ID"
+BLOBSTORE_TYPE="${BLOBSTORE_TYPE:-ipfs}"
+IPFS_API_ENDPOINT="${IPFS_API_ENDPOINT:-/ip4/127.0.0.1/tcp/5001}"
+AERON_SOCKET_SNDBUF="${AERON_SOCKET_SNDBUF:-16384}"
+AERON_SOCKET_RCVBUF="${AERON_SOCKET_RCVBUF:-16384}"
+AERON_RCV_INITIAL_WINDOW="${AERON_RCV_INITIAL_WINDOW:-16384}"
 
-# Build list of peer URLs (all on localhost with different ports)
-# For dynamic joining: new validators should include all existing validators
-PEERS=""
-if [ $NODE_ID -eq 0 ]; then
-    # Node 0: peers with 1 and 2 (initial cluster)
-    PEERS="http://localhost:8092,http://localhost:8093"
-elif [ $NODE_ID -eq 1 ]; then
-    # Node 1: peers with 0 and 2 (initial cluster)
-    PEERS="http://localhost:8091,http://localhost:8093"
-elif [ $NODE_ID -eq 2 ]; then
-    # Node 2: peers with 0 and 1 (initial cluster)
-    PEERS="http://localhost:8091,http://localhost:8092"
-elif [ $NODE_ID -eq 3 ]; then
-    # Node 3: joins later, peers with all existing validators (0, 1, 2)
-    PEERS="http://localhost:8091,http://localhost:8092,http://localhost:8093"
-elif [ $NODE_ID -eq 4 ]; then
-    # Node 4: joins later, peers with all existing validators (0, 1, 2, 3)
-    PEERS="http://localhost:8091,http://localhost:8092,http://localhost:8093,http://localhost:8094"
-else
-    echo "⚠️  Warning: Node ID $NODE_ID not configured, using default peers"
-    PEERS="http://localhost:8091,http://localhost:8092,http://localhost:8093"
+# Build list of peer URLs from cluster size and node id
+if [ "$NODE_ID" -ge "$AERON_CLUSTER_SIZE" ]; then
+    echo "❌ ERROR: node-id $NODE_ID is out of range for OAK_CLUSTER_SIZE=$AERON_CLUSTER_SIZE"
+    exit 1
 fi
+
+PEERS=""
+for i in $(seq 0 $((AERON_CLUSTER_SIZE - 1))); do
+    if [ "$i" -eq "$NODE_ID" ]; then
+        continue
+    fi
+    peer_port=$((8090 + (i * 2)))
+    if [ -z "$PEERS" ]; then
+        PEERS="http://localhost:$peer_port"
+    else
+        PEERS="$PEERS,http://localhost:$peer_port"
+    fi
+done
+
+HOSTNAMES=""
+for i in $(seq 1 "$AERON_CLUSTER_SIZE"); do
+    if [ -z "$HOSTNAMES" ]; then
+        HOSTNAMES="localhost"
+    else
+        HOSTNAMES="$HOSTNAMES,localhost"
+    fi
+done
 
 # Get JAR file modification times
 get_jar_timestamp() {
@@ -138,6 +185,7 @@ echo "HTTP Port: $HTTP_PORT"
 echo "Store Dir: $STORE_DIR"
 echo "Aeron Dir: $AERON_DIR"
 echo "Peers: $PEERS"
+echo "Cluster Size: $AERON_CLUSTER_SIZE"
 echo "Log File: $LOG_FILE"
 echo ""
 echo "📦 JAR Files:"
@@ -165,14 +213,18 @@ java \
   -Dconsensus.self.url="http://localhost:$HTTP_PORT" \
   -Dconsensus.peers="$PEERS" \
   -Daeron.cluster.nodeId=$NODE_ID \
-  -Daeron.cluster.hostnames="localhost,localhost,localhost,localhost,localhost" \
+  -Daeron.cluster.hostnames="$HOSTNAMES" \
   -Daeron.cluster.basePort=$CLUSTER_BASE_PORT \
   -Daeron.cluster.bootstrap=false \
+  -Daeron.socket.so_sndbuf="$AERON_SOCKET_SNDBUF" \
+  -Daeron.socket.so_rcvbuf="$AERON_SOCKET_RCVBUF" \
+  -Daeron.rcv.initial.window.length="$AERON_RCV_INITIAL_WINDOW" \
   -Dwallet.keystore.path="$STORE_DIR/validator-keystore.properties" \
+  -Dblobstore.type="$BLOBSTORE_TYPE" \
+  -Dipfs.api.endpoint="$IPFS_API_ENDPOINT" \
   ${BEACON_API_KEY:+-Dbeacon.api.key="$BEACON_API_KEY"} \
   ${BEACON_API_URL:+-Dbeacon.api.url="$BEACON_API_URL"} \
   -jar "$JAR_FILE" \
   --port $HTTP_PORT \
   --store "$STORE_DIR" \
   >> "$LOG_FILE" 2>&1
-
