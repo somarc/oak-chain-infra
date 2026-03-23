@@ -1,12 +1,25 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
-NODES=(8090 8092 8094)
 HOST="${HOST:-http://localhost}"
+CLUSTER_SIZE="${OAK_CLUSTER_SIZE:-3}"
+VALIDATOR_HTTP_BASE_PORT="${OAK_VALIDATOR_HTTP_BASE_PORT:-8090}"
+VALIDATOR_HTTP_PORT_STEP="${OAK_VALIDATOR_HTTP_PORT_STEP:-2}"
+NODES=()
 AUTH_TOKEN="${OAK_VALIDATOR_AUTH_TOKEN:-}"
 LOG_DIR="${LOG_DIR:-$HOME/oak-chain/logs}"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 LOG_FILE="${LOG_DIR}/validator-api-smoke-${TIMESTAMP}.log"
+
+if [ "$CLUSTER_SIZE" = "5" ]; then
+  NODE_COUNT=5
+else
+  NODE_COUNT=3
+fi
+
+for node in $(seq 0 $((NODE_COUNT - 1))); do
+  NODES+=($((VALIDATOR_HTTP_BASE_PORT + (node * VALIDATOR_HTTP_PORT_STEP))))
+done
 
 mkdir -p "$LOG_DIR"
 

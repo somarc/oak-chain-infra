@@ -9,14 +9,17 @@ Mode-oriented infrastructure repository for Oak Chain operations.
   - Load-test harness for local consensus validation.
   - Intentionally excludes Sling starter, EDS site, and SDK build orchestration.
 - `modes/sepolia/`
-  - AWS deployment stub for upcoming Sepolia pivot.
+  - Local validator lifecycle scripts for Sepolia + AWS deployment stub.
 - `modes/mainnet/`
   - AWS deployment stub for production topology.
 
 ## Current Status
 
 - `mock`: active and populated from legacy `blockchain-aem-infra` local-development/load-test scripts.
-- `sepolia`: stub only.
+  - includes single-cluster lifecycle plus local `3x2` sharding topology wrappers
+  - current single-host `3x2` proof is partially blocked until `jackrabbit-oak`
+    honors a configurable Aeron port base instead of hardcoding `9000`
+- `sepolia`: local validator lifecycle automation available; AWS topology remains stub.
 - `mainnet`: stub only.
 
 ## Migration Note

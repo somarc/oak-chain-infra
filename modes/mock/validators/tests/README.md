@@ -6,6 +6,8 @@ Focused validation scripts for local validator clusters.
 
 - `validator-api-smoke.sh`
   - Probes validator API/cluster endpoints across nodes.
+- `sharding-3x2-smoke.sh`
+  - Probes both local clusters for sharding health and authoritative-vs-foreign write routing.
 - `test-binary-upload.sh`
   - Exercises binary/IPFS upload flow.
 
@@ -20,6 +22,9 @@ Focused validation scripts for local validator clusters.
 ```bash
 # API/cluster smoke
 ./validator-api-smoke.sh
+
+# 3x2 sharding smoke
+./sharding-3x2-smoke.sh
 
 # Binary/IPFS flow
 ./test-binary-upload.sh

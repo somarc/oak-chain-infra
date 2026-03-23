@@ -1,10 +1,20 @@
 #!/bin/bash
 set -euo pipefail
 
-PID_DIR="${PID_DIR:-$HOME/oak-chain/pids}"
+CLUSTER_NAME="${OAK_CLUSTER_NAME:-single-cluster}"
+CLUSTER_RUNTIME_ROOT="${CLUSTER_RUNTIME_ROOT:-$HOME/oak-chain}"
+PID_DIR="${PID_DIR:-$CLUSTER_RUNTIME_ROOT/pids}"
 OPS_PROXY_PID_FILE="$PID_DIR/ops-proxy.pid"
 PREVENT_SLEEP_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/prevent-sleep.sh"
+WATCHDOG_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../monitoring/validator-failure-watchdog.sh"
+LOAD_OBSERVER_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../monitoring/load-bottleneck-observer.sh"
 CLUSTER_SIZE="${OAK_CLUSTER_SIZE:-}"
+VALIDATOR_HTTP_BASE_PORT="${OAK_VALIDATOR_HTTP_BASE_PORT:-8090}"
+VALIDATOR_HTTP_PORT_STEP="${OAK_VALIDATOR_HTTP_PORT_STEP:-2}"
+AERON_CLUSTER_BASE_PORT="${AERON_CLUSTER_BASE_PORT:-9000}"
+AERON_GLOBAL_TMP_CLEANUP="${AERON_GLOBAL_TMP_CLEANUP:-false}"
+VALIDATOR_PROCESS_MATCH="${VALIDATOR_PROCESS_MATCH:-$CLUSTER_RUNTIME_ROOT/validator-}"
+OPS_PROXY_PORT="${OPS_PROXY_PORT:-8787}"
 NODES=()
 HTTP_PORTS=()
 
@@ -47,9 +57,19 @@ else
 fi
 
 for node in "${NODES[@]}"; do
-  HTTP_PORTS+=($((8090 + (node * 2))))
-  HTTP_PORTS+=($((8091 + (node * 2))))
+  HTTP_PORTS+=($((VALIDATOR_HTTP_BASE_PORT + (node * VALIDATOR_HTTP_PORT_STEP))))
+  HTTP_PORTS+=($((VALIDATOR_HTTP_BASE_PORT + 1 + (node * VALIDATOR_HTTP_PORT_STEP))))
 done
+
+find_validator_processes() {
+  local pattern
+  if [ -n "$VALIDATOR_PROCESS_MATCH" ]; then
+    pattern="oak-segment-consensus.*${VALIDATOR_PROCESS_MATCH}"
+  else
+    pattern="oak-segment-consensus"
+  fi
+  pgrep -f "$pattern" 2>/dev/null || true
+}
 
 is_pid_alive() {
   local pid="$1"
@@ -58,7 +78,7 @@ is_pid_alive() {
 
 stop_validator_processes() {
   local java_pids
-  java_pids="$(pgrep -f "oak-segment-consensus" 2>/dev/null || true)"
+  java_pids="$(find_validator_processes)"
   if [ -z "$java_pids" ]; then
     echo "• No validator processes found"
     return
@@ -70,7 +90,7 @@ stop_validator_processes() {
   sleep 3
 
   local remaining
-  remaining="$(pgrep -f "oak-segment-consensus" 2>/dev/null || true)"
+  remaining="$(find_validator_processes)"
   if [ -n "$remaining" ]; then
     echo "  -> Force killing remaining processes: $remaining"
     echo "$remaining" | xargs kill -9 2>/dev/null || true
@@ -96,51 +116,67 @@ cleanup_aeron_runtime() {
   echo "• Cleaning Aeron runtime directories"
   for node in "${NODES[@]}"; do
     local path
-    path="$HOME/oak-chain/validator-$node/aeron-cluster-node-$node"
+    path="$CLUSTER_RUNTIME_ROOT/validator-$node/aeron-cluster-node-$node"
     if [ -d "$path" ]; then
       echo "  - Removing: $path"
       rm -rf "$path" 2>/dev/null && cleaned_count=$((cleaned_count + 1)) || true
     fi
-    path="$HOME/oak-chain/validator-$node/aeron-cluster-node-$node-driver"
+    path="$CLUSTER_RUNTIME_ROOT/validator-$node/aeron-cluster-node-$node-driver"
     if [ -d "$path" ]; then
       echo "  - Removing: $path"
       rm -rf "$path" 2>/dev/null || true
     fi
-    path="$HOME/oak-chain/validator-$node/aeron-$username-$node-driver"
+    path="$CLUSTER_RUNTIME_ROOT/validator-$node/aeron-media-driver-$node"
     if [ -d "$path" ]; then
       echo "  - Removing: $path"
       rm -rf "$path" 2>/dev/null || true
     fi
-    for path in \
-      "/tmp/aeron-${username}-${node}-driver" \
-      "/tmp/aeron-${username}-driver-${node}" \
-      "/tmp/aeron-cluster-node-${node}"; do
-      if [ -d "$path" ]; then
-        echo "  - Removing: $path"
-        rm -rf "$path" 2>/dev/null || true
-      fi
-    done
+    path="$CLUSTER_RUNTIME_ROOT/validator-$node/aeron-media-$node-driver"
+    if [ -d "$path" ]; then
+      echo "  - Removing: $path"
+      rm -rf "$path" 2>/dev/null || true
+    fi
+    path="$CLUSTER_RUNTIME_ROOT/validator-$node/aeron-$username-$node-driver"
+    if [ -d "$path" ]; then
+      echo "  - Removing: $path"
+      rm -rf "$path" 2>/dev/null || true
+    fi
   done
 
-  if [ -d "/var/folders" ]; then
+  if [ "$AERON_GLOBAL_TMP_CLEANUP" = "true" ]; then
+    echo "  - Aggressive global Aeron tmp cleanup enabled"
+    for node in "${NODES[@]}"; do
+      for path in \
+        "/tmp/aeron-${username}-${node}-driver" \
+        "/tmp/aeron-${username}-driver-${node}" \
+        "/tmp/aeron-cluster-node-${node}"; do
+        if [ -d "$path" ]; then
+          echo "  - Removing: $path"
+          rm -rf "$path" 2>/dev/null || true
+        fi
+      done
+    done
+
+    if [ -d "/var/folders" ]; then
+      while IFS= read -r path; do
+        if [ -d "$path" ]; then
+          echo "  - Removing: $path"
+          rm -rf "$path" 2>/dev/null || true
+        fi
+      done < <(find /var/folders -type d \( \
+        -name "aeron-${username}-*-driver" -o \
+        -name "aeron-cluster-node-*" \
+      \) 2>/dev/null || true)
+    fi
+
+    echo "  - Checking for orphaned Aeron directories..."
     while IFS= read -r path; do
       if [ -d "$path" ]; then
-        echo "  - Removing: $path"
+        echo "  - Removing orphaned: $path"
         rm -rf "$path" 2>/dev/null || true
       fi
-    done < <(find /var/folders -type d \( \
-      -name "aeron-${username}-*-driver" -o \
-      -name "aeron-cluster-node-*" \
-    \) 2>/dev/null || true)
+    done < <(find /tmp -maxdepth 1 -type d -name "aeron-*" 2>/dev/null || true)
   fi
-
-  echo "  - Checking for orphaned Aeron directories..."
-  while IFS= read -r path; do
-    if [ -d "$path" ]; then
-      echo "  - Removing orphaned: $path"
-      rm -rf "$path" 2>/dev/null || true
-    fi
-  done < <(find /tmp -maxdepth 1 -type d -name "aeron-*" 2>/dev/null || true)
 
   if [ "$cleaned_count" -gt 0 ]; then
     echo "• Cleaned $cleaned_count Aeron cluster directory(ies)"
@@ -187,23 +223,12 @@ else
   echo "• OPS proxy not running (no pid file)"
 fi
 
-ops_pids="$(pgrep -f "ops-api-(mock|worker)\\.mjs" 2>/dev/null || true)"
-if [ -n "$ops_pids" ]; then
-  echo "• Stopping lingering OPS proxy process(es): $ops_pids"
-  echo "$ops_pids" | xargs kill 2>/dev/null || true
-  sleep 1
-  ops_pids="$(pgrep -f "ops-api-(mock|worker)\\.mjs" 2>/dev/null || true)"
-  if [ -n "$ops_pids" ]; then
-    echo "$ops_pids" | xargs kill -9 2>/dev/null || true
-  fi
-fi
-
 stop_validator_processes
 
-port_list=("${HTTP_PORTS[@]}")
+port_list=("${HTTP_PORTS[@]}" "$OPS_PROXY_PORT")
 for node in "${NODES[@]}"; do
   for offset in 0 1 2 3 4 5; do
-    port_list+=($((9000 + (node * 100) + offset)))
+    port_list+=($((AERON_CLUSTER_BASE_PORT + (node * 100) + offset)))
   done
 done
 kill_ports "${port_list[@]}"
@@ -216,4 +241,12 @@ if [ -x "$PREVENT_SLEEP_SCRIPT" ]; then
   "$PREVENT_SLEEP_SCRIPT" stop >/dev/null 2>&1 || true
 fi
 
-echo "✅ Stop sequence complete"
+if [ -x "$WATCHDOG_SCRIPT" ]; then
+  "$WATCHDOG_SCRIPT" --stop >/dev/null 2>&1 || true
+fi
+
+if [ -x "$LOAD_OBSERVER_SCRIPT" ]; then
+  "$LOAD_OBSERVER_SCRIPT" --stop >/dev/null 2>&1 || true
+fi
+
+echo "✅ Stop sequence complete for cluster '$CLUSTER_NAME'"
