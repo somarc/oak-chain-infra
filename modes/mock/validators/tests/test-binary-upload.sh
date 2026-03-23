@@ -24,7 +24,9 @@ NC='\033[0m' # No Color
 
 # Configuration
 VALIDATOR_URL="${VALIDATOR_URL:-http://localhost:8090}"
-BINARY_FILE="${1:-do-it-live.jpeg}"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
+DEFAULT_BINARY_FILE="${REPO_ROOT}/fixtures/binaries/do-it-live.jpeg"
+BINARY_FILE="${1:-$DEFAULT_BINARY_FILE}"
 TEST_WALLET="${TEST_WALLET:-0x03c6fced478cbbc9a4fab34ef9f40767739d1ff7}"
 NODE_PATH="/oak-chain/content/demo/ipfs-test-$(date +%s)"
 
@@ -348,4 +350,3 @@ main() {
 
 # Run main
 main
-

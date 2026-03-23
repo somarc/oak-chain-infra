@@ -4,6 +4,8 @@ Mode-oriented infrastructure repository for Oak Chain operations.
 
 ## Layout
 
+- `fixtures/binaries/`
+  - Shared binary payloads for validator tests and load harnesses.
 - `modes/mock/`
   - Local validator lifecycle and IPFS daemon workflows.
   - Load-test harness for local consensus validation.

@@ -74,8 +74,8 @@ BINARY_FILES=()
 init_binary_files() {
     local workspace_root="$1"
     local candidates=(
-        "${workspace_root}/do-it-live.jpeg"
-        "${workspace_root}/rickrubin.jpeg"
+        "${workspace_root}/oak-chain-infra/fixtures/binaries/do-it-live.jpeg"
+        "${workspace_root}/oak-chain-infra/fixtures/binaries/rickrubin.jpeg"
         "${workspace_root}/oak-chain-docs/public/oak-chain-logo.jpeg"
     )
     BINARY_FILES=()
