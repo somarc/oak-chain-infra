@@ -308,7 +308,7 @@ fi
 
 # Run the validator, redirecting output to log file
 # Aeron Cluster requires access to internal Java APIs for Agrona Unsafe access
-java \
+exec java \
   --add-opens=java.base/jdk.internal.misc=ALL-UNNAMED \
   -Dconsensus.enabled=true \
   -Dconsensus.mode=aeron \

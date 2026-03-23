@@ -9,6 +9,8 @@ CLUSTER_B_CONFIG="${CLUSTER_B_CONFIG:-$CONFIG_DIR/3x2-cluster-b.env}"
 
 WALLET_A="${WALLET_A:-0x1100000000000000000000000000000000000000}"
 WALLET_B="${WALLET_B:-0x8800000000000000000000000000000000000000}"
+READ_TIMEOUT_SECONDS="${READ_TIMEOUT_SECONDS:-30}"
+READ_POLL_INTERVAL_SECONDS="${READ_POLL_INTERVAL_SECONDS:-1}"
 
 REQUEST_STATUS=""
 REQUEST_LOCATION=""
@@ -107,6 +109,21 @@ submit_write() {
   REQUEST_LOCATION="$(awk 'BEGIN{IGNORECASE=1} /^Location:/ {print $2}' "$header_file" | tr -d '\r' | tail -n 1)"
 
   rm -f "$body_file" "$header_file"
+}
+
+cluster_ports() {
+  local cluster_size="$1"
+  local http_base_port="$2"
+  local http_port_step="$3"
+  local node_count=3
+  if [ "$cluster_size" = "5" ]; then
+    node_count=5
+  fi
+
+  local idx
+  for ((idx=0; idx<node_count; idx++)); do
+    printf '%s\n' $((http_base_port + (idx * http_port_step)))
+  done
 }
 
 assert_equals() {
@@ -223,6 +240,62 @@ assert_local_write_result() {
   esac
 }
 
+wallet_contains_message() {
+  local port="$1"
+  local wallet="$2"
+  local expected_message="$3"
+  local body
+  body="$(curl -s "http://127.0.0.1:${port}/v1/wallets/content?wallet=${wallet}" || true)"
+  case "$body" in
+    *"\"message\":\"${expected_message}\""*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+wait_for_wallet_message() {
+  local port="$1"
+  local wallet="$2"
+  local expected_message="$3"
+  local label="$4"
+  local deadline
+  deadline=$((SECONDS + READ_TIMEOUT_SECONDS))
+
+  while [ "$SECONDS" -le "$deadline" ]; do
+    if wallet_contains_message "$port" "$wallet" "$expected_message"; then
+      echo "✅ ${label}: port=${port}"
+      return 0
+    fi
+    sleep "$READ_POLL_INTERVAL_SECONDS"
+  done
+
+  echo "❌ ${label}: timed out waiting for '${expected_message}' on port ${port}"
+  local body
+  body="$(curl -s "http://127.0.0.1:${port}/v1/wallets/content?wallet=${wallet}" || true)"
+  if [ -n "$body" ]; then
+    echo "   body: ${body}"
+  fi
+  exit 1
+}
+
+wait_for_cluster_wallet_message() {
+  local cluster_name="$1"
+  local cluster_size="$2"
+  local http_base_port="$3"
+  local http_port_step="$4"
+  local wallet="$5"
+  local expected_message="$6"
+  local purpose="$7"
+
+  local port
+  while IFS= read -r port; do
+    wait_for_wallet_message "$port" "$wallet" "$expected_message" "${cluster_name} ${purpose}"
+  done < <(cluster_ports "$cluster_size" "$http_base_port" "$http_port_step")
+}
+
 read_cluster_state() {
   local cluster_config="$1"
   local label="$2"
@@ -264,18 +337,27 @@ echo ""
 
 submit_write "http://127.0.0.1:${A_HTTP_BASE}" "$WALLET_A" "local-write-a"
 assert_local_write_result "$REQUEST_STATUS" "$REQUEST_LOCATION" "cluster-a" "$A_SIZE" "$A_HTTP_BASE" "$A_HTTP_STEP"
+MESSAGE_A="[3x2 smoke] local-write-a"
 
 submit_write "http://127.0.0.1:${B_HTTP_BASE}" "$WALLET_A" "foreign-write-a-on-b"
 assert_equals "$REQUEST_STATUS" "307" "cluster-b foreign write redirect"
 assert_prefix "$REQUEST_LOCATION" "http://127.0.0.1:${A_HTTP_BASE}/v1/propose-write" "cluster-b redirect target"
 
+wait_for_cluster_wallet_message "cluster-a" "$A_SIZE" "$A_HTTP_BASE" "$A_HTTP_STEP" "$WALLET_A" "$MESSAGE_A" "local wallet visible"
+wait_for_cluster_wallet_message "cluster-b" "$B_SIZE" "$B_HTTP_BASE" "$B_HTTP_STEP" "$WALLET_A" "$MESSAGE_A" "remote wallet visible"
+
 submit_write "http://127.0.0.1:${B_HTTP_BASE}" "$WALLET_B" "local-write-b"
 assert_local_write_result "$REQUEST_STATUS" "$REQUEST_LOCATION" "cluster-b" "$B_SIZE" "$B_HTTP_BASE" "$B_HTTP_STEP"
+MESSAGE_B="[3x2 smoke] local-write-b"
 
 submit_write "http://127.0.0.1:${A_HTTP_BASE}" "$WALLET_B" "foreign-write-b-on-a"
 assert_equals "$REQUEST_STATUS" "307" "cluster-a foreign write redirect"
 assert_prefix "$REQUEST_LOCATION" "http://127.0.0.1:${B_HTTP_BASE}/v1/propose-write" "cluster-a redirect target"
 
+wait_for_cluster_wallet_message "cluster-b" "$B_SIZE" "$B_HTTP_BASE" "$B_HTTP_STEP" "$WALLET_B" "$MESSAGE_B" "local wallet visible"
+wait_for_cluster_wallet_message "cluster-a" "$A_SIZE" "$A_HTTP_BASE" "$A_HTTP_STEP" "$WALLET_B" "$MESSAGE_B" "remote wallet visible"
+
 echo ""
 echo "✅ 3x2 sharding smoke passed."
-echo "   Proven: health split, authoritative-store separation, and local-vs-foreign write routing."
+echo "   Proven: health split, authoritative-store separation, local-vs-foreign write routing,"
+echo "   and bidirectional cross-cluster read visibility across all validator endpoints."

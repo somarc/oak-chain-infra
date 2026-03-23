@@ -289,6 +289,53 @@ kill_ports() {
   done
 }
 
+launch_detached_process() {
+  local pid_file="$1"
+  local log_file="$2"
+  shift 2
+
+  mkdir -p "$(dirname "$pid_file")" "$(dirname "$log_file")"
+
+  if command -v setsid >/dev/null 2>&1; then
+    setsid "$@" >>"$log_file" 2>&1 &
+    echo $! > "$pid_file"
+    return 0
+  fi
+
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$pid_file" "$log_file" "$@" <<'PY'
+import os
+import sys
+
+pid_file = sys.argv[1]
+log_file = sys.argv[2]
+cmd = sys.argv[3:]
+
+pid = os.fork()
+if pid > 0:
+    os._exit(0)
+
+os.setsid()
+
+pid = os.fork()
+if pid > 0:
+    with open(pid_file, "w", encoding="utf-8") as handle:
+        handle.write(f"{pid}\n")
+    os._exit(0)
+
+with open(log_file, "ab", buffering=0) as log:
+    os.dup2(log.fileno(), 1)
+    os.dup2(log.fileno(), 2)
+os.execvp(cmd[0], cmd)
+PY
+    return 0
+  fi
+
+  echo "⚠️  setsid/python3 unavailable; falling back to nohup for detached launch"
+  nohup "$@" >>"$log_file" 2>&1 &
+  echo $! > "$pid_file"
+}
+
 cleanup_aeron_runtime() {
   local username
   local cleaned_count=0
@@ -478,9 +525,9 @@ start_ipfs_daemon_if_needed() {
     fi
   fi
 
-  nohup ipfs daemon > "$IPFS_DAEMON_LOG_FILE" 2>&1 &
-  local ipfs_pid=$!
-  echo "$ipfs_pid" > "$IPFS_PID_FILE"
+  launch_detached_process "$IPFS_PID_FILE" "$IPFS_DAEMON_LOG_FILE" ipfs daemon
+  local ipfs_pid
+  ipfs_pid="$(ipfs_pid_from_file)"
   echo "  - IPFS daemon started (PID: $ipfs_pid)"
   echo "  - Logs: $IPFS_DAEMON_LOG_FILE"
   sleep 1
@@ -587,8 +634,8 @@ for node in "${NODES[@]}"; do
   rm -f "$pid_file"
   echo "• Starting validator-$node"
   OAK_MOCK_EPOCH_DURATION_SECONDS="$MOCK_EPOCH_SECONDS" \
-    nohup "$VALIDATOR_SCRIPT" "$node" > "$LOG_DIR/start-validator-${node}.log" 2>&1 &
-  echo $! > "$pid_file"
+    launch_detached_process "$pid_file" "$LOG_DIR/start-validator-${node}.log" \
+    "$VALIDATOR_SCRIPT" "$node"
   sleep 1
 
 done
@@ -603,14 +650,11 @@ else
     echo "⚠️  OPS proxy skipped: src/ops-api-worker.mjs missing in $OPS_EDGE_WORKER_DIR"
   else
     echo "• Starting OPS proxy on :$OPS_PROXY_PORT (mode=$OPS_PROXY_MODE upstream=$OPS_PROXY_UPSTREAM)"
-    (
-      cd "$OPS_EDGE_WORKER_DIR"
-      OPS_MOCK_MODE="$OPS_PROXY_MODE" \
+    OPS_MOCK_MODE="$OPS_PROXY_MODE" \
       OPS_UPSTREAM_BASE="$OPS_PROXY_UPSTREAM" \
       OPS_MOCK_PORT="$OPS_PROXY_PORT" \
-      nohup node src/ops-api-worker.mjs > "$OPS_PROXY_LOG_FILE" 2>&1 &
-      echo $! > "$OPS_PROXY_PID_FILE"
-    )
+      launch_detached_process "$OPS_PROXY_PID_FILE" "$OPS_PROXY_LOG_FILE" \
+        bash -lc "cd \"$OPS_EDGE_WORKER_DIR\" && exec node src/ops-api-worker.mjs"
     sleep 1
   fi
 fi
