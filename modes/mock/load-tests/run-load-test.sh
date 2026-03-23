@@ -16,12 +16,29 @@ VALIDATOR_BINARY_PERCENT="${VALIDATOR_BINARY_PERCENT:-30}"
 SLEEP_MIN_MS="${SLEEP_MIN_MS:-50}"
 SLEEP_MAX_MS="${SLEEP_MAX_MS:-250}"
 REGISTER_CLIENTS="${REGISTER_CLIENTS:-true}"
+CLIENT_ID_OFFSET="${CLIENT_ID_OFFSET:-0}"
+MAX_429_BODY_SAMPLES_PER_CLIENT="${MAX_429_BODY_SAMPLES_PER_CLIENT:-3}"
+MAX_OTHER_FAILURE_SAMPLES_PER_CLIENT="${MAX_OTHER_FAILURE_SAMPLES_PER_CLIENT:-20}"
+FAIL_SUMMARY_INTERVAL="${FAIL_SUMMARY_INTERVAL:-500}"
+CAPTURE_WRITE_ACCEPTS="${CAPTURE_WRITE_ACCEPTS:-false}"
+CAPTURE_WRITE_ACCEPTS_DIR="${CAPTURE_WRITE_ACCEPTS_DIR:-}"
 
 source "$SCRIPT_DIR/suite-lib.sh"
 
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 TEST_LOG="${LOG_DIR}/${TEST_NAME}-${TIMESTAMP}.log"
 CLIENT_PIDS=()
+
+if [ "$CAPTURE_WRITE_ACCEPTS" = "true" ]; then
+    if ! command -v jq >/dev/null 2>&1; then
+        echo "ERROR: CAPTURE_WRITE_ACCEPTS=true requires jq on PATH."
+        exit 1
+    fi
+    if [ -z "$CAPTURE_WRITE_ACCEPTS_DIR" ]; then
+        CAPTURE_WRITE_ACCEPTS_DIR="${LOG_DIR}/${TEST_NAME}-accepted-${TIMESTAMP}"
+    fi
+    mkdir -p "$CAPTURE_WRITE_ACCEPTS_DIR"
+fi
 
 init_binary_files "$WORKSPACE_ROOT"
 
@@ -36,28 +53,41 @@ trap cleanup EXIT INT TERM HUP
 
 run_client() {
     local client_id=$1
-    local wallet="${WALLETS[$((client_id - 1))]}"
+    local global_client_id=$((client_id + CLIENT_ID_OFFSET))
+    local wallet="${WALLETS[$((global_client_id - 1))]}"
     local client_log="${LOG_DIR}/${TEST_NAME}-client-${client_id}-${TIMESTAMP}.log"
     local target_writes
     target_writes=$(random_int "$MIN_WRITES_PER_CLIENT" "$MAX_WRITES_PER_CLIENT")
 
     if [ "$REGISTER_CLIENTS" = "true" ]; then
-        register_client "$wallet" "$client_id"
+        register_client "$wallet" "$global_client_id"
     fi
 
-    log_line "$TEST_LOG" "Client-${client_id} start (wallet: ${wallet:0:10}...), target writes: ${target_writes}"
+    log_line "$TEST_LOG" "Client-${global_client_id} start (wallet: ${wallet:0:10}...), target writes: ${target_writes}"
 
     local end_time=$(( $(date +%s) + TEST_DURATION_SECONDS ))
     local write_count=0
     local ok_count=0
     local fail_count=0
+    local fail_429=0
+    local fail_4xx=0
+    local fail_5xx=0
+    local fail_000=0
+    local fail_other=0
+    local sample_429=0
+    local sample_other=0
+    local capture_file=""
+    if [ "$CAPTURE_WRITE_ACCEPTS" = "true" ]; then
+        capture_file="${CAPTURE_WRITE_ACCEPTS_DIR}/client-${client_id}.ndjson"
+        : > "$capture_file"
+    fi
 
     while [ "$(date +%s)" -lt "$end_time" ] && [ "$write_count" -lt "$target_writes" ]; do
         write_count=$((write_count + 1))
 
         local message_json
         message_json=$(printf '{"title":"Load Test %s-%s","body":"write %s","tags":["load","client-%s"],"meta":{"client":"%s","ts":%s},"payload":{"seq":%s}}' \
-            "$client_id" "$write_count" "$write_count" "$client_id" "$client_id" "$(date +%s)" "$write_count")
+            "$global_client_id" "$write_count" "$write_count" "$global_client_id" "$global_client_id" "$(date +%s)" "$write_count")
 
         local signature
         signature=$(random_hex 65)
@@ -88,7 +118,7 @@ run_client() {
                     -F "contentType=page"
                     -F "ethereumTxHash=${tx_hash}"
                     -F "paymentTier=${tier}"
-                    -F "organization=Client${client_id}"
+                    -F "organization=Client${global_client_id}"
                 )
                 local binary_file
                 binary_file=$(pick_binary_file)
@@ -107,7 +137,7 @@ run_client() {
                     -d "contentType=page"
                     -d "ethereumTxHash=${tx_hash}"
                     -d "paymentTier=${tier}"
-                    -d "organization=Client${client_id}"
+                    -d "organization=Client${global_client_id}"
                     -d "ipfsCid=${cid}"
                 )
             fi
@@ -121,7 +151,7 @@ run_client() {
                 -d "contentType=page"
                 -d "ethereumTxHash=${tx_hash}"
                 -d "paymentTier=${tier}"
-                -d "organization=Client${client_id}"
+                -d "organization=Client${global_client_id}"
             )
         fi
 
@@ -129,9 +159,47 @@ run_client() {
 
         if [ "$http_code" = "200" ] || [ "$http_code" = "202" ]; then
             ok_count=$((ok_count + 1))
+            if [ "$CAPTURE_WRITE_ACCEPTS" = "true" ]; then
+                local storage_path
+                storage_path=$(jq -r '.storagePath // .data.storagePath // empty' "/tmp/lt-${TEST_NAME}-${client_id}-$$.json" 2>/dev/null || true)
+                if [ -n "$storage_path" ]; then
+                    jq -nc \
+                        --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                        --arg test "$TEST_NAME" \
+                        --arg clientId "$global_client_id" \
+                        --arg wallet "$wallet" \
+                        --arg organization "Client${global_client_id}" \
+                        --arg tier "$tier" \
+                        --arg txHash "$tx_hash" \
+                        --arg proposalId "$(jq -r '.proposalId // .data.proposalId // empty' "/tmp/lt-${TEST_NAME}-${client_id}-$$.json" 2>/dev/null || true)" \
+                        --arg storagePath "$storage_path" \
+                        --arg httpCode "$http_code" \
+                        '{ts:$ts,test:$test,clientId:$clientId,wallet:$wallet,organization:$organization,tier:$tier,ethereumTxHash:$txHash,proposalId:$proposalId,storagePath:$storagePath,httpCode:$httpCode}' \
+                        >> "$capture_file"
+                fi
+            fi
         else
             fail_count=$((fail_count + 1))
-            echo "HTTP ${http_code}: $(cat /tmp/lt-${TEST_NAME}-${client_id}-$$.json 2>/dev/null)" >> "$client_log"
+            case "$http_code" in
+                429)
+                    fail_429=$((fail_429 + 1))
+                    if [ "$sample_429" -lt "$MAX_429_BODY_SAMPLES_PER_CLIENT" ]; then
+                        sample_429=$((sample_429 + 1))
+                        echo "HTTP ${http_code}: $(cat /tmp/lt-${TEST_NAME}-${client_id}-$$.json 2>/dev/null)" >> "$client_log"
+                    fi
+                    ;;
+                4??) fail_4xx=$((fail_4xx + 1)) ;;
+                5??) fail_5xx=$((fail_5xx + 1)) ;;
+                000) fail_000=$((fail_000 + 1)) ;;
+                *) fail_other=$((fail_other + 1)) ;;
+            esac
+            if [ "$http_code" != "429" ] && [ "$sample_other" -lt "$MAX_OTHER_FAILURE_SAMPLES_PER_CLIENT" ]; then
+                sample_other=$((sample_other + 1))
+                echo "HTTP ${http_code}: $(cat /tmp/lt-${TEST_NAME}-${client_id}-$$.json 2>/dev/null)" >> "$client_log"
+            fi
+            if [ $((fail_count % FAIL_SUMMARY_INTERVAL)) -eq 0 ]; then
+                log_line "$TEST_LOG" "Client-${global_client_id} fail-summary: total=${fail_count} http429=${fail_429} http4xx=${fail_4xx} http5xx=${fail_5xx} http000=${fail_000} other=${fail_other}"
+            fi
         fi
 
         local sleep_ms
@@ -139,7 +207,15 @@ run_client() {
         sleep "$(awk "BEGIN {print ${sleep_ms}/1000}")"
     done
 
-    log_line "$TEST_LOG" "Client-${client_id} done: writes=${write_count}, ok=${ok_count}, fail=${fail_count}"
+    {
+        echo "HTTP_SUMMARY code=429 count=${fail_429}"
+        echo "HTTP_SUMMARY code=4xx count=${fail_4xx}"
+        echo "HTTP_SUMMARY code=5xx count=${fail_5xx}"
+        echo "HTTP_SUMMARY code=000 count=${fail_000}"
+        echo "HTTP_SUMMARY code=other count=${fail_other}"
+        echo "HTTP_SUMMARY code=total_fail count=${fail_count}"
+    } >> "$client_log"
+    log_line "$TEST_LOG" "Client-${global_client_id} done: writes=${write_count}, ok=${ok_count}, fail=${fail_count}, http429=${fail_429}, http4xx=${fail_4xx}, http5xx=${fail_5xx}, http000=${fail_000}, other=${fail_other}"
 }
 
 log_line "$TEST_LOG" "Starting ${TEST_NAME}"
@@ -148,9 +224,12 @@ log_line "$TEST_LOG" "Clients: ${NUM_CLIENTS}"
 log_line "$TEST_LOG" "Writes/client: ${MIN_WRITES_PER_CLIENT}-${MAX_WRITES_PER_CLIENT}"
 log_line "$TEST_LOG" "Binary rate: ${BINARY_PERCENT}% (validator-hosted ${VALIDATOR_BINARY_PERCENT}%)"
 log_line "$TEST_LOG" "Duration: ${TEST_DURATION_SECONDS}s"
+if [ "$CAPTURE_WRITE_ACCEPTS" = "true" ]; then
+    log_line "$TEST_LOG" "Capture accepted writes: true (dir: ${CAPTURE_WRITE_ACCEPTS_DIR})"
+fi
 
-if [ "$NUM_CLIENTS" -gt "${#WALLETS[@]}" ]; then
-    log_line "$TEST_LOG" "ERROR: NUM_CLIENTS exceeds available wallet count (${#WALLETS[@]})."
+if [ $((NUM_CLIENTS + CLIENT_ID_OFFSET)) -gt "${#WALLETS[@]}" ]; then
+    log_line "$TEST_LOG" "ERROR: NUM_CLIENTS + CLIENT_ID_OFFSET exceeds available wallet count (${#WALLETS[@]})."
     exit 1
 fi
 
