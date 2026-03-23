@@ -17,6 +17,7 @@ Mode-oriented infrastructure repository for Oak Chain operations.
 
 - `mock`: active and populated from legacy `blockchain-aem-infra` local-development/load-test scripts.
   - includes single-cluster lifecycle plus local `3x2` sharding topology wrappers
+  - uses explicit config surfaces for `OAK_CLUSTER_NAME`, `CLUSTER_RUNTIME_ROOT`, `OAK_VALIDATOR_HTTP_BASE_PORT`, `AERON_DIR_BASE`, and `AERON_CLUSTER_BASE_PORT`
   - current single-host `3x2` proof is partially blocked until `jackrabbit-oak`
     honors a configurable Aeron port base instead of hardcoding `9000`
 - `sepolia`: local validator lifecycle automation available; AWS topology remains stub.

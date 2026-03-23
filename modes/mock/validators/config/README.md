@@ -4,6 +4,7 @@ Environment templates used by mock-mode validator lifecycle scripts.
 
 - `mock.env`: mock-chain defaults
 - `ipfs.env`: local IPFS endpoint defaults
+- `3x2-common.env`: shared 3x2 defaults for both clusters
 - `3x2-cluster-a.env`: dual-cluster topology config for cluster A
 - `3x2-cluster-b.env`: dual-cluster topology config for cluster B
 

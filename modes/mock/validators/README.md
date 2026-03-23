@@ -29,6 +29,7 @@ Validator-only local operations for Oak Chain mock mode.
   - Starts two separate 3-node clusters for local sharding proof.
   - Reuses `start-cluster.sh` twice with scoped runtime roots, non-overlapping ports, and inverse shard ownership.
   - Disables watchdog/load-observer by default for the dual-cluster topology.
+  - Reads shared cluster defaults from `config/3x2-common.env` and per-cluster overrides from `config/3x2-cluster-a.env` / `config/3x2-cluster-b.env`.
 - `lifecycle/stop-3x2.sh`
   - Stops the local dual-cluster topology cleanly, cluster B first then cluster A.
 - `lifecycle/status-3x2.sh`
@@ -50,6 +51,7 @@ Validator-only local operations for Oak Chain mock mode.
 
 - `config/mock.env`
 - `config/ipfs.env`
+- `config/3x2-common.env`
 - `config/3x2-cluster-a.env`
 - `config/3x2-cluster-b.env`
 
@@ -82,8 +84,10 @@ Validator-only local operations for Oak Chain mock mode.
 - `ENABLE_WATCHDOG` (default: `true`)
 - `WATCHDOG_INTERVAL_SECONDS` (default: `5`)
 - `CLUSTER_RUNTIME_ROOT` (default: `$HOME/oak-chain`)
+- `OAK_CLUSTER_NAME` (default: `single-cluster`)
 - `OAK_VALIDATOR_HTTP_BASE_PORT` (default: `8090`)
 - `OAK_VALIDATOR_HTTP_PORT_STEP` (default: `2`)
 - `AERON_CLUSTER_BASE_PORT` (default: `9000`)
+- `AERON_DIR_BASE` (default: `$CLUSTER_RUNTIME_ROOT/validator-N/aeron-media`)
 - `AERON_GLOBAL_TMP_CLEANUP` (default: `false`; keep it false for `3x2`)
 - `EXTRA_JAVA_OPTS` (used by 3x2 configs to turn on sharding JVM flags)

@@ -25,6 +25,8 @@ Operational rule:
 - local multi-cluster runs must set Aeron directory isolation explicitly
 - infra-side bookkeeping paths alone are not enough; the JVM must set Aeron’s
   real directory base via `aeron.dir`
+- `AERON_DIR_BASE` should be unique per cluster, and `AERON_GLOBAL_TMP_CLEANUP`
+  should stay `false` for shared-host `3x2` runs
 
 ### 2. Aeron transport port collision
 
@@ -47,13 +49,17 @@ Operational rule:
 
 - local `3x2` on one host remains blocked until `jackrabbit-oak` honors a
   configurable Aeron port base end to end
+- the cluster configs now surface `AERON_CLUSTER_BASE_PORT`, but it only works
+  once the runtime consumes it consistently
 
 ## Infra Rules Going Forward
 
 - Keep `AERON_GLOBAL_TMP_CLEANUP=false` for any multi-cluster local topology.
 - Use separate:
   - `CLUSTER_RUNTIME_ROOT`
+  - `OAK_CLUSTER_NAME`
   - `OAK_VALIDATOR_HTTP_BASE_PORT`
+  - `AERON_DIR_BASE`
   - `OPS_PROXY_PORT`
 - Do not assume `AERON_CLUSTER_BASE_PORT` alone gives safe single-host
   isolation until the runtime patch lands in `jackrabbit-oak`.

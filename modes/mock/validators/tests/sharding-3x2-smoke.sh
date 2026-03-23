@@ -90,7 +90,9 @@ submit_write() {
   header_file="$(mktemp)"
 
   local tx_hash
+  local signature
   tx_hash="0x$(openssl rand -hex 32 2>/dev/null || date +%s%N)"
+  signature="0x$(openssl rand -hex 65 2>/dev/null || printf '%0130d' 0)"
 
   REQUEST_STATUS="$(curl -s -D "$header_file" -o "$body_file" -w "%{http_code}" \
     -X POST "${base_url}/v1/propose-write" \
@@ -99,7 +101,7 @@ submit_write() {
     -d "ethereumTxHash=${tx_hash}" \
     -d "contentType=page" \
     -d "message=[3x2 smoke] ${label}" \
-    -d "signature=0xmocksig" \
+    -d "signature=${signature}" \
     -d "paymentTier=standard" || echo "000")"
   REQUEST_BODY="$(cat "$body_file")"
   REQUEST_LOCATION="$(awk 'BEGIN{IGNORECASE=1} /^Location:/ {print $2}' "$header_file" | tr -d '\r' | tail -n 1)"

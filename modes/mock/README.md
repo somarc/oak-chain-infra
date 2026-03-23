@@ -7,6 +7,7 @@ Mock mode is local-only and focused on validator lifecycle + IPFS daemon operati
 - `validators/`
   - local startup/teardown scripts
   - additive 3x2 dual-cluster sharding wrappers
+  - explicit config packs for shared 3x2 defaults plus per-cluster overrides
   - troubleshooting notes for local Aeron collisions and sharding bring-up
   - validator debug helpers
   - monitoring utilities
