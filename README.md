@@ -12,6 +12,8 @@ Mode-oriented infrastructure repository for Oak Chain operations.
   - Local validator lifecycle scripts for Sepolia + AWS deployment stub.
 - `modes/mainnet/`
   - AWS deployment stub for production topology.
+  - Includes imported legacy Elastic Beanstalk/EFS Terraform starter material
+    under `modes/mainnet/aws/legacy/oak-segment-consensus/`.
 
 ## Current Status
 
@@ -21,7 +23,7 @@ Mode-oriented infrastructure repository for Oak Chain operations.
   - current single-host `3x2` proof is partially blocked until `jackrabbit-oak`
     honors a configurable Aeron port base instead of hardcoding `9000`
 - `sepolia`: local validator lifecycle automation available; AWS topology remains stub.
-- `mainnet`: stub only.
+- `mainnet`: stub plus imported legacy standalone AWS Terraform skeleton.
 
 ## Migration Note
 
