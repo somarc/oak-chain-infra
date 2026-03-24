@@ -149,6 +149,8 @@ CLUSTER_BASE_PORT=9000
 AERON_DIR="$HOME/oak-chain/aeron-$NODE_ID"
 BLOBSTORE_TYPE="${BLOBSTORE_TYPE:-ipfs}"
 IPFS_API_ENDPOINT="${IPFS_API_ENDPOINT:-/ip4/127.0.0.1/tcp/5001}"
+IPFS_GATEWAY_BASE="${IPFS_GATEWAY_BASE:-https://ipfs.io/ipfs/}"
+IPFS_LOCAL_GATEWAY_BASE="${IPFS_LOCAL_GATEWAY_BASE:-http://127.0.0.1:8099/ipfs/}"
 AERON_SOCKET_SNDBUF="${AERON_SOCKET_SNDBUF:-16384}"
 AERON_SOCKET_RCVBUF="${AERON_SOCKET_RCVBUF:-16384}"
 AERON_RCV_INITIAL_WINDOW="${AERON_RCV_INITIAL_WINDOW:-16384}"
@@ -349,6 +351,8 @@ java \
   -Dwallet.keystore.path="$STORE_DIR/validator-keystore.properties" \
   -Dblobstore.type="$BLOBSTORE_TYPE" \
   -Dipfs.api.endpoint="$IPFS_API_ENDPOINT" \
+  -Dipfs.gateway.base="$IPFS_GATEWAY_BASE" \
+  -Dipfs.local.gateway.base="$IPFS_LOCAL_GATEWAY_BASE" \
   $queue_tuning_jvm_args \
   ${BEACON_API_KEY:+-Dbeacon.api.key="$BEACON_API_KEY"} \
   ${BEACON_API_URL:+-Dbeacon.api.url="$BEACON_API_URL"} \

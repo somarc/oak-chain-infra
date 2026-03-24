@@ -145,10 +145,12 @@ Test script → base64 binary → POST /v1/propose-write
 
 1. **Install IPFS** (kubo):
    ```bash
-   brew install ipfs  # macOS
+   brew install kubo  # macOS; the CLI binary remains `ipfs`
    # OR
-   curl -O https://dist.ipfs.tech/kubo/v0.24.0/kubo_v0.24.0_darwin-amd64.tar.gz
-   tar xvf kubo_v0.24.0_darwin-amd64.tar.gz
+   # Download the current release for your OS/arch from:
+   # https://github.com/ipfs/kubo/releases
+   curl -LO https://dist.ipfs.tech/kubo/<version>/kubo_<version>_darwin-arm64.tar.gz
+   tar xvf kubo_<version>_darwin-arm64.tar.gz
    cd kubo
    sudo ./install.sh
    ```

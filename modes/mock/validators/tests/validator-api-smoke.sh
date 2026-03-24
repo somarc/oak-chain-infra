@@ -37,7 +37,11 @@ fetch() {
   local body_file
   body_file=$(mktemp)
   local code
-  code=$(curl -s --max-time 3 -w "%{http_code}" -o "$body_file" "${header_args[@]}" "$url" || echo "000")
+  if [ "${#header_args[@]}" -gt 0 ]; then
+    code=$(curl -s --max-time 3 -w "%{http_code}" -o "$body_file" "${header_args[@]}" "$url" || echo "000")
+  else
+    code=$(curl -s --max-time 3 -w "%{http_code}" -o "$body_file" "$url" || echo "000")
+  fi
   local body
   body=$(cat "$body_file")
   rm -f "$body_file"

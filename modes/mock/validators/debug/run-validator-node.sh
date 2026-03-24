@@ -119,6 +119,8 @@ AERON_DIR_BASE="${AERON_DIR_BASE:-$STORE_DIR/aeron-media}"
 AERON_DIR="${AERON_DIR:-${AERON_DIR_BASE}-${NODE_ID}-driver}"
 BLOBSTORE_TYPE="${BLOBSTORE_TYPE:-ipfs}"
 IPFS_API_ENDPOINT="${IPFS_API_ENDPOINT:-/ip4/127.0.0.1/tcp/5001}"
+IPFS_GATEWAY_BASE="${IPFS_GATEWAY_BASE:-http://127.0.0.1:8099/ipfs/}"
+IPFS_LOCAL_GATEWAY_BASE="${IPFS_LOCAL_GATEWAY_BASE:-http://127.0.0.1:8099/ipfs/}"
 AERON_SOCKET_SNDBUF="${AERON_SOCKET_SNDBUF:-16384}"
 AERON_SOCKET_RCVBUF="${AERON_SOCKET_RCVBUF:-16384}"
 AERON_RCV_INITIAL_WINDOW="${AERON_RCV_INITIAL_WINDOW:-16384}"
@@ -327,6 +329,8 @@ exec java \
   -Dwallet.keystore.path="$STORE_DIR/validator-keystore.properties" \
   -Dblobstore.type="$BLOBSTORE_TYPE" \
   -Dipfs.api.endpoint="$IPFS_API_ENDPOINT" \
+  -Dipfs.gateway.base="$IPFS_GATEWAY_BASE" \
+  -Dipfs.local.gateway.base="$IPFS_LOCAL_GATEWAY_BASE" \
   $queue_tuning_jvm_args \
   $EXTRA_JAVA_OPTS \
   ${BEACON_API_KEY:+-Dbeacon.api.key="$BEACON_API_KEY"} \

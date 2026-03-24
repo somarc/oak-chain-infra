@@ -248,13 +248,17 @@ is_ipfs_daemon_pid() {
   [[ "$cmd" == *"ipfs daemon"* || "$cmd" == *"kubo daemon"* ]]
 }
 
+find_ipfs_daemon_pid() {
+  pgrep -f "(ipfs|kubo) daemon" 2>/dev/null | head -n 1 || true
+}
+
 ipfs_process_running() {
-  pgrep -f "(ipfs|kubo) daemon" >/dev/null 2>&1
+  [ -n "$(find_ipfs_daemon_pid)" ]
 }
 
 ipfs_pid_from_file() {
   if [ -f "$IPFS_PID_FILE" ]; then
-    cat "$IPFS_PID_FILE" 2>/dev/null || true
+    tr -d '[:space:]' < "$IPFS_PID_FILE" 2>/dev/null || true
   fi
 }
 
@@ -276,6 +280,25 @@ cleanup_stale_pid_file() {
   if ! is_pid_alive "$pid"; then
     rm -f "$pid_file"
   fi
+}
+
+wait_for_pid_file_value() {
+  local pid_file="$1"
+  local timeout_tenths="${2:-50}"
+  local pid=""
+  local remaining="$timeout_tenths"
+
+  while [ "$remaining" -gt 0 ]; do
+    pid="$(tr -d '[:space:]' < "$pid_file" 2>/dev/null || true)"
+    if [ -n "$pid" ]; then
+      printf '%s\n' "$pid"
+      return 0
+    fi
+    remaining=$((remaining - 1))
+    sleep 0.1
+  done
+
+  return 1
 }
 
 kill_ports() {
@@ -328,6 +351,9 @@ with open(log_file, "ab", buffering=0) as log:
     os.dup2(log.fileno(), 2)
 os.execvp(cmd[0], cmd)
 PY
+    if ! wait_for_pid_file_value "$pid_file" >/dev/null; then
+      return 1
+    fi
     return 0
   fi
 
@@ -512,7 +538,7 @@ start_ipfs_daemon_if_needed() {
   fi
 
   if ipfs_process_running; then
-    echo "• IPFS daemon process detected; skipping auto-start and waiting for API readiness"
+    echo "• IPFS daemon process detected (PID: $(find_ipfs_daemon_pid)); skipping auto-start and waiting for API readiness"
     return 0
   fi
 
@@ -525,13 +551,33 @@ start_ipfs_daemon_if_needed() {
     fi
   fi
 
-  launch_detached_process "$IPFS_PID_FILE" "$IPFS_DAEMON_LOG_FILE" ipfs daemon
+  : > "$IPFS_DAEMON_LOG_FILE"
+  if ! launch_detached_process "$IPFS_PID_FILE" "$IPFS_DAEMON_LOG_FILE" ipfs daemon; then
+    echo "❌ Failed to launch IPFS daemon"
+    rm -f "$IPFS_PID_FILE" 2>/dev/null || true
+    return 1
+  fi
   local ipfs_pid
   ipfs_pid="$(ipfs_pid_from_file)"
-  echo "  - IPFS daemon started (PID: $ipfs_pid)"
+  if [ -z "$ipfs_pid" ]; then
+    ipfs_pid="$(find_ipfs_daemon_pid)"
+    if is_ipfs_daemon_pid "$ipfs_pid"; then
+      echo "$ipfs_pid" > "$IPFS_PID_FILE"
+    fi
+  fi
+  if [ -n "$ipfs_pid" ]; then
+    echo "  - IPFS daemon started (PID: $ipfs_pid)"
+  else
+    echo "  - IPFS daemon start issued; waiting for API readiness"
+  fi
   echo "  - Logs: $IPFS_DAEMON_LOG_FILE"
   sleep 1
   if ! is_pid_alive "$ipfs_pid"; then
+    ipfs_pid="$(find_ipfs_daemon_pid)"
+    if is_ipfs_daemon_pid "$ipfs_pid"; then
+      echo "$ipfs_pid" > "$IPFS_PID_FILE"
+      return 0
+    fi
     echo "❌ IPFS daemon exited immediately after startup"
     if [ -f "$IPFS_DAEMON_LOG_FILE" ]; then
       echo "   Last daemon log lines:"

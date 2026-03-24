@@ -302,13 +302,17 @@ is_ipfs_daemon_pid() {
   [[ "$cmd" == *"ipfs daemon"* || "$cmd" == *"kubo daemon"* ]]
 }
 
+find_ipfs_daemon_pid() {
+  pgrep -f "(ipfs|kubo) daemon" 2>/dev/null | head -n 1 || true
+}
+
 ipfs_process_running() {
-  pgrep -f "(ipfs|kubo) daemon" >/dev/null 2>&1
+  [ -n "$(find_ipfs_daemon_pid)" ]
 }
 
 ipfs_pid_from_file() {
   if [ -f "$IPFS_PID_FILE" ]; then
-    cat "$IPFS_PID_FILE" 2>/dev/null || true
+    tr -d '[:space:]' < "$IPFS_PID_FILE" 2>/dev/null || true
   fi
 }
 
@@ -501,7 +505,7 @@ start_ipfs_daemon_if_needed() {
   fi
 
   if ipfs_process_running; then
-    echo "• IPFS daemon process detected; skipping auto-start and waiting for API readiness"
+    echo "• IPFS daemon process detected (PID: $(find_ipfs_daemon_pid)); skipping auto-start and waiting for API readiness"
     return 0
   fi
 
@@ -521,6 +525,11 @@ start_ipfs_daemon_if_needed() {
   echo "  - Logs: $IPFS_DAEMON_LOG_FILE"
   sleep 1
   if ! is_pid_alive "$ipfs_pid"; then
+    ipfs_pid="$(find_ipfs_daemon_pid)"
+    if is_ipfs_daemon_pid "$ipfs_pid"; then
+      echo "$ipfs_pid" > "$IPFS_PID_FILE"
+      return 0
+    fi
     echo "❌ IPFS daemon exited immediately after startup"
     if [ -f "$IPFS_DAEMON_LOG_FILE" ]; then
       echo "   Last daemon log lines:"
