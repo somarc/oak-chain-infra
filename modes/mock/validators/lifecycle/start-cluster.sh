@@ -34,6 +34,7 @@ WAIT_SECONDS="${WAIT_SECONDS:-45}"
 MOCK_EPOCH_SECONDS="${OAK_MOCK_EPOCH_DURATION_SECONDS:-300}"
 ENABLE_WATCHDOG="${ENABLE_WATCHDOG:-true}"
 ENABLE_LOAD_OBSERVER="${ENABLE_LOAD_OBSERVER:-true}"
+RESET_CLUSTER_TEST_LOGS="${RESET_CLUSTER_TEST_LOGS:-true}"
 CLUSTER_SIZE="${OAK_CLUSTER_SIZE:-3}"
 CLUSTER_WALLET_FILE="${CLUSTER_WALLET_FILE:-$CLUSTER_RUNTIME_ROOT/cluster-keystore.properties}"
 AERON_CLUSTER_BASE_PORT="${AERON_CLUSTER_BASE_PORT:-9000}"
@@ -65,6 +66,7 @@ Options:
   --no-load-observer Disable load bottleneck observer auto-start.
 
 Environment:
+  RESET_CLUSTER_TEST_LOGS      true|false reset active runtime logs during --fresh preflight (default: $RESET_CLUSTER_TEST_LOGS)
   IPFS_API_HTTP              IPFS API base URL (default: $IPFS_API_HTTP)
   IPFS_READY_TIMEOUT_SECONDS Max seconds to wait for IPFS API readiness (default: $IPFS_READY_TIMEOUT_SECONDS)
   AUTO_START_IPFS            Auto-start IPFS daemon if API is unavailable (default: $AUTO_START_IPFS)
@@ -452,6 +454,43 @@ cleanup_aeron_runtime() {
   fi
 }
 
+reset_active_runtime_logs() {
+  [ "$RESET_CLUSTER_TEST_LOGS" = "true" ] || return 0
+
+  echo "• Resetting active runtime logs"
+
+  local paths=(
+    "$OPS_PROXY_LOG_FILE"
+    "$LOG_DIR/load-bottleneck-observer.log"
+    "$LOG_DIR/validator-watchdog.log"
+    "$LOG_DIR/validator.log"
+  )
+  local node
+  local path
+  local reset_count=0
+
+  for node in "${NODES[@]}"; do
+    paths+=(
+      "$LOG_DIR/validator-${node}.log"
+      "$LOG_DIR/start-validator-${node}.log"
+      "$LOG_DIR/rejoin-validator-${node}.log"
+    )
+  done
+
+  for path in "${paths[@]}"; do
+    if [ -f "$path" ]; then
+      : > "$path"
+      reset_count=$((reset_count + 1))
+    fi
+  done
+
+  if [ "$reset_count" -gt 0 ]; then
+    echo "  - Reset $reset_count log file(s)"
+  else
+    echo "  - No active runtime logs to reset"
+  fi
+}
+
 preflight_cleanup() {
   echo "• Preflight cleanup (pid/port/runtime hygiene)"
 
@@ -488,6 +527,7 @@ preflight_cleanup() {
   kill_ports "${port_list[@]}"
 
   cleanup_aeron_runtime
+  reset_active_runtime_logs
 }
 
 build_consensus_jars() {
