@@ -11,6 +11,37 @@ is_pid_alive() {
   [ -n "$pid" ] && ps -p "$pid" >/dev/null 2>&1
 }
 
+read_pid_file() {
+  local pid_file="$1"
+  if [ ! -f "$pid_file" ]; then
+    return 1
+  fi
+  tr -d '[:space:]' <"$pid_file"
+}
+
+list_validator_pids() {
+  local pids=()
+  local pid_file
+  local pid
+
+  shopt -s nullglob
+  for pid_file in "$PID_DIR"/validator-*.pid; do
+    pid="$(read_pid_file "$pid_file" 2>/dev/null || true)"
+    if is_pid_alive "$pid"; then
+      pids+=("$pid")
+    else
+      rm -f "$pid_file"
+    fi
+  done
+  shopt -u nullglob
+
+  if [ "${#pids[@]}" -eq 0 ]; then
+    return 0
+  fi
+
+  printf '%s\n' "${pids[@]}"
+}
+
 case "${1:-start}" in
   start)
     if ! command -v caffeinate >/dev/null 2>&1; then
@@ -27,26 +58,20 @@ case "${1:-start}" in
       rm -f "$PID_FILE"
     fi
 
-    validator_pids="$(pgrep -f "oak-segment-consensus" | tr '\n' ' ' | xargs || true)"
+    validator_pids="$(list_validator_pids | tr '\n' ' ' | xargs || true)"
     if [ -z "$validator_pids" ]; then
       echo "sleep-prevention:DOWN reason=no-validators"
       exit 1
     fi
 
-    first_pid="$(echo "$validator_pids" | awk '{print $1}')"
-    if [ -z "$first_pid" ]; then
-      echo "sleep-prevention:DOWN reason=no-first-pid"
-      exit 1
-    fi
-
-    caffeinate -d -i -m -s -u -w "$first_pid" >/dev/null 2>&1 &
+    nohup caffeinate -d -i -m >/dev/null 2>&1 &
     cp=$!
     sleep 1
     if is_pid_alive "$cp"; then
       echo "$cp" >"$PID_FILE"
-      echo "sleep-prevention:UP pid=$cp validator=$first_pid"
+      echo "sleep-prevention:UP pid=$cp validators=\"${validator_pids}\""
     else
-      echo "sleep-prevention:DOWN reason=caffeinate-failed validator=$first_pid"
+      echo "sleep-prevention:DOWN reason=caffeinate-failed"
       exit 1
     fi
     ;;
@@ -73,7 +98,12 @@ case "${1:-start}" in
         echo "sleep-prevention:UP pid=$pid"
       else
         rm -f "$PID_FILE"
-        echo "sleep-prevention:DOWN stale-pid"
+        validator_pids="$(list_validator_pids | tr '\n' ' ' | xargs || true)"
+        if [ -n "$validator_pids" ]; then
+          echo "sleep-prevention:DOWN reason=not-running validators=\"${validator_pids}\""
+        else
+          echo "sleep-prevention:DOWN"
+        fi
       fi
     else
       echo "sleep-prevention:DOWN"

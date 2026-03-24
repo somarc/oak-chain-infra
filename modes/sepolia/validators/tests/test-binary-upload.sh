@@ -326,12 +326,14 @@ check_ipfs_pins() {
         echo -e "${CYAN}   • $CID${NC}"
     done
     
-    # Check if our expected CID is pinned
     if [ ! -z "$EXPECTED_CID" ]; then
-        if echo "$PINS" | grep -q "$EXPECTED_CID"; then
-            echo -e "${GREEN}✅ Expected CID is pinned: $EXPECTED_CID${NC}"
+        PIN_STATUS=$(ipfs pin ls --type=all "$EXPECTED_CID" 2>/dev/null || true)
+        if [ -n "$PIN_STATUS" ]; then
+            PIN_TYPE=$(echo "$PIN_STATUS" | awk '{print $2}' | head -n1)
+            echo -e "${GREEN}✅ Expected CID pin state: ${PIN_TYPE:-unknown} (${EXPECTED_CID})${NC}"
         else
-            echo -e "${YELLOW}⚠️  Expected CID not found in pins${NC}"
+            echo -e "${RED}❌ Expected CID is not pinned: $EXPECTED_CID${NC}"
+            exit 1
         fi
     fi
 }

@@ -60,7 +60,11 @@ is_pid_alive() {
 
 stop_validator_processes() {
   local java_pids
-  java_pids="$(pgrep -f "oak-segment-consensus" 2>/dev/null || true)"
+  if [ -n "${VALIDATOR_PROCESS_MATCH:-}" ]; then
+    java_pids="$(pgrep -f "oak-segment-consensus.*${VALIDATOR_PROCESS_MATCH}" 2>/dev/null || true)"
+  else
+    java_pids="$(pgrep -f "oak-segment-consensus.*${CLUSTER_RUNTIME_ROOT:-$HOME/oak-chain}" 2>/dev/null || true)"
+  fi
   if [ -z "$java_pids" ]; then
     echo "• No validator processes found"
     return
@@ -72,7 +76,11 @@ stop_validator_processes() {
   sleep 3
 
   local remaining
-  remaining="$(pgrep -f "oak-segment-consensus" 2>/dev/null || true)"
+  if [ -n "${VALIDATOR_PROCESS_MATCH:-}" ]; then
+    remaining="$(pgrep -f "oak-segment-consensus.*${VALIDATOR_PROCESS_MATCH}" 2>/dev/null || true)"
+  else
+    remaining="$(pgrep -f "oak-segment-consensus.*${CLUSTER_RUNTIME_ROOT:-$HOME/oak-chain}" 2>/dev/null || true)"
+  fi
   if [ -n "$remaining" ]; then
     echo "  -> Force killing remaining processes: $remaining"
     echo "$remaining" | xargs kill -9 2>/dev/null || true
@@ -107,6 +115,18 @@ cleanup_aeron_runtime() {
     if [ -d "$path" ]; then
       echo "  - Removing: $path"
       rm -rf "$path" 2>/dev/null || true
+    fi
+    if [ -n "${AERON_DIR_BASE:-}" ]; then
+      path="${AERON_DIR_BASE}-${node}-driver"
+      if [ -d "$path" ]; then
+        echo "  - Removing: $path"
+        rm -rf "$path" 2>/dev/null || true
+      fi
+      path="${AERON_DIR_BASE}-${node}"
+      if [ -d "$path" ]; then
+        echo "  - Removing: $path"
+        rm -rf "$path" 2>/dev/null || true
+      fi
     fi
     path="$HOME/oak-chain/validator-$node/aeron-$username-$node-driver"
     if [ -d "$path" ]; then
@@ -215,7 +235,7 @@ if [ "$KEEP_RUNTIME" = "false" ]; then
 fi
 
 if [ -x "$PREVENT_SLEEP_SCRIPT" ]; then
-  "$PREVENT_SLEEP_SCRIPT" stop >/dev/null 2>&1 || true
+  PID_DIR="$PID_DIR" "$PREVENT_SLEEP_SCRIPT" stop >/dev/null 2>&1 || true
 fi
 
 if [ -x "$WATCHDOG_SCRIPT" ]; then

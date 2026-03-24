@@ -364,6 +364,18 @@ cleanup_aeron_runtime() {
       echo "  - Removing: $path"
       rm -rf "$path" 2>/dev/null || true
     fi
+    if [ -n "${AERON_DIR_BASE:-}" ]; then
+      path="${AERON_DIR_BASE}-${node}-driver"
+      if [ -d "$path" ]; then
+        echo "  - Removing: $path"
+        rm -rf "$path" 2>/dev/null || true
+      fi
+      path="${AERON_DIR_BASE}-${node}"
+      if [ -d "$path" ]; then
+        echo "  - Removing: $path"
+        rm -rf "$path" 2>/dev/null || true
+      fi
+    fi
     path="$HOME/oak-chain/validator-$node/aeron-$username-$node-driver"
     if [ -d "$path" ]; then
       echo "  - Removing: $path"
@@ -412,15 +424,24 @@ preflight_cleanup() {
     cleanup_stale_pid_file "$PID_DIR/validator-${node}.pid"
   done
   cleanup_stale_pid_file "$OPS_PROXY_PID_FILE"
+  cleanup_stale_pid_file "$PID_DIR/caffeinate.pid"
 
   local java_pids
-  java_pids="$(pgrep -f "oak-segment-consensus" 2>/dev/null || true)"
+  if [ -n "${VALIDATOR_PROCESS_MATCH:-}" ]; then
+    java_pids="$(pgrep -f "oak-segment-consensus.*${VALIDATOR_PROCESS_MATCH}" 2>/dev/null || true)"
+  else
+    java_pids="$(pgrep -f "oak-segment-consensus.*${CLUSTER_RUNTIME_ROOT}" 2>/dev/null || true)"
+  fi
   if [ -n "$java_pids" ]; then
     echo "• Found validator processes: $java_pids"
     echo "  -> Sending TERM signal..."
     echo "$java_pids" | xargs kill 2>/dev/null || true
     sleep 3
-    java_pids="$(pgrep -f "oak-segment-consensus" 2>/dev/null || true)"
+    if [ -n "${VALIDATOR_PROCESS_MATCH:-}" ]; then
+      java_pids="$(pgrep -f "oak-segment-consensus.*${VALIDATOR_PROCESS_MATCH}" 2>/dev/null || true)"
+    else
+      java_pids="$(pgrep -f "oak-segment-consensus.*${CLUSTER_RUNTIME_ROOT}" 2>/dev/null || true)"
+    fi
     if [ -n "$java_pids" ]; then
       echo "  -> Force killing remaining processes: $java_pids"
       echo "$java_pids" | xargs kill -9 2>/dev/null || true
@@ -657,7 +678,7 @@ else
 fi
 
 if [ "$NO_CAFFEINATE" = "false" ] && [ -x "$PREVENT_SLEEP_SCRIPT" ]; then
-  "$PREVENT_SLEEP_SCRIPT" start >/dev/null 2>&1 || true
+  PID_DIR="$PID_DIR" "$PREVENT_SLEEP_SCRIPT" start >/dev/null 2>&1 || true
 fi
 
 if [ "$ENABLE_WATCHDOG" = "true" ] && [ -x "$WATCHDOG_SCRIPT" ]; then

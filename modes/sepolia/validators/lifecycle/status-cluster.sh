@@ -108,7 +108,8 @@ else
 fi
 
 if [ -x "$PREVENT_SLEEP_SCRIPT" ]; then
-  "$PREVENT_SLEEP_SCRIPT" status || echo "sleep-prevention:WARN status-check-failed"
+  PID_DIR="${CLUSTER_RUNTIME_ROOT:-$HOME/oak-chain}/pids" \
+    "$PREVENT_SLEEP_SCRIPT" status || echo "sleep-prevention:WARN status-check-failed"
 else
   echo "sleep-prevention:UNAVAILABLE script-missing"
 fi

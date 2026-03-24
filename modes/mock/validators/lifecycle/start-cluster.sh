@@ -156,7 +156,7 @@ find_validator_processes() {
   if [ -n "$VALIDATOR_PROCESS_MATCH" ]; then
     pattern="oak-segment-consensus.*${VALIDATOR_PROCESS_MATCH}"
   else
-    pattern="oak-segment-consensus"
+    pattern="oak-segment-consensus.*${CLUSTER_RUNTIME_ROOT}"
   fi
   pgrep -f "$pattern" 2>/dev/null || true
 }
@@ -289,7 +289,11 @@ wait_for_pid_file_value() {
   local remaining="$timeout_tenths"
 
   while [ "$remaining" -gt 0 ]; do
-    pid="$(tr -d '[:space:]' < "$pid_file" 2>/dev/null || true)"
+    if [ -f "$pid_file" ]; then
+      pid="$(tr -d '[:space:]' < "$pid_file" 2>/dev/null || true)"
+    else
+      pid=""
+    fi
     if [ -n "$pid" ]; then
       printf '%s\n' "$pid"
       return 0
@@ -389,6 +393,18 @@ cleanup_aeron_runtime() {
       echo "  - Removing: $path"
       rm -rf "$path" 2>/dev/null || true
     fi
+    if [ -n "${AERON_DIR_BASE:-}" ]; then
+      path="${AERON_DIR_BASE}-${node}-driver"
+      if [ -d "$path" ]; then
+        echo "  - Removing: $path"
+        rm -rf "$path" 2>/dev/null || true
+      fi
+      path="${AERON_DIR_BASE}-${node}"
+      if [ -d "$path" ]; then
+        echo "  - Removing: $path"
+        rm -rf "$path" 2>/dev/null || true
+      fi
+    fi
     path="$CLUSTER_RUNTIME_ROOT/validator-$node/aeron-$username-$node-driver"
     if [ -d "$path" ]; then
       echo "  - Removing: $path"
@@ -443,6 +459,7 @@ preflight_cleanup() {
     cleanup_stale_pid_file "$PID_DIR/validator-${node}.pid"
   done
   cleanup_stale_pid_file "$OPS_PROXY_PID_FILE"
+  cleanup_stale_pid_file "$PID_DIR/caffeinate.pid"
 
   local java_pids
   java_pids="$(find_validator_processes)"
@@ -706,7 +723,7 @@ else
 fi
 
 if [ "$NO_CAFFEINATE" = "false" ] && [ -x "$PREVENT_SLEEP_SCRIPT" ]; then
-  "$PREVENT_SLEEP_SCRIPT" start >/dev/null 2>&1 || true
+  PID_DIR="$PID_DIR" "$PREVENT_SLEEP_SCRIPT" start >/dev/null 2>&1 || true
 fi
 
 if [ "$ENABLE_WATCHDOG" = "true" ] && [ -x "$WATCHDOG_SCRIPT" ]; then
