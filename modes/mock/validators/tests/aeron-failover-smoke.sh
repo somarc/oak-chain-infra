@@ -7,6 +7,8 @@ source "$SCRIPT_DIR/_cluster_test_lib.sh"
 FOLLOWER_STOP_MODE="${FOLLOWER_STOP_MODE:-${FAILOVER_STOP_MODE:-crash}}"
 LEADER_STOP_MODE="${LEADER_STOP_MODE:-${FAILOVER_STOP_MODE:-crash}}"
 POST_REJOIN_SETTLE_SECONDS="${POST_REJOIN_SETTLE_SECONDS:-45}"
+FOLLOWER_TEST_WALLET="${FOLLOWER_TEST_WALLET:-0x1111111111111111111111111111111111111111}"
+LEADER_TEST_WALLET="${LEADER_TEST_WALLET:-0x2222222222222222222222222222222222222222}"
 STOPPED_NODES=()
 
 restore_cluster() {
@@ -63,7 +65,7 @@ record_stopped_node "$follower_node"
 wait_node_down "$follower_node"
 log "FOLLOWER_TEST stop node=${follower_node} port=${follower_port} mode=${FOLLOWER_STOP_MODE}"
 
-submit_result=$(submit_write "${HOST}:${baseline_leader_port}" "0x1111111111111111111111111111111111111111" "FOLLOWER_FAILOVER_$(date +%s)")
+submit_result=$(submit_write "${HOST}:${baseline_leader_port}" "$FOLLOWER_TEST_WALLET" "FOLLOWER_FAILOVER_$(date +%s)")
 submit_code=$(echo "$submit_result" | cut -d'|' -f1)
 follower_op=$(echo "$submit_result" | cut -d'|' -f2)
 follower_path=$(echo "$submit_result" | cut -d'|' -f3)
@@ -114,7 +116,7 @@ if [ -z "$new_leader_port" ]; then
 fi
 log "LEADER_TEST new_leader=${new_leader_port}"
 
-leader_submit=$(submit_write "${HOST}:${new_leader_port}" "0x2222222222222222222222222222222222222222" "LEADER_FAILOVER_$(date +%s)")
+leader_submit=$(submit_write "${HOST}:${new_leader_port}" "$LEADER_TEST_WALLET" "LEADER_FAILOVER_$(date +%s)")
 leader_submit_code=$(echo "$leader_submit" | cut -d'|' -f1)
 leader_op=$(echo "$leader_submit" | cut -d'|' -f2)
 leader_path=$(echo "$leader_submit" | cut -d'|' -f3)

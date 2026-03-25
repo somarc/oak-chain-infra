@@ -6,6 +6,7 @@ source "$SCRIPT_DIR/_cluster_test_lib.sh"
 
 CATCHUP_WRITE_COUNT="${CATCHUP_WRITE_COUNT:-8}"
 CATCHUP_STOP_MODE="${CATCHUP_STOP_MODE:-crash}"
+CATCHUP_WALLET="${CATCHUP_WALLET:-0x4444444444444444444444444444444444444444}"
 STOPPED_NODE=""
 
 restore_cluster() {
@@ -50,7 +51,7 @@ log "CATCHUP_TEST stop-mode=${CATCHUP_STOP_MODE}"
 declare -a STORAGE_PATHS=()
 for i in $(seq 1 "$CATCHUP_WRITE_COUNT"); do
   submit_result=$(submit_write "${HOST}:${leader_port}" \
-    "0x4444444444444444444444444444444444444444" \
+    "$CATCHUP_WALLET" \
     "FOLLOWER_CATCHUP_${i}_$(date +%s)")
   submit_code=$(echo "$submit_result" | cut -d'|' -f1)
   operation_id=$(echo "$submit_result" | cut -d'|' -f2)

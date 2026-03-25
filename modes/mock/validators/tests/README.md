@@ -8,6 +8,8 @@ Focused validation scripts for local validator clusters.
   - Probes validator API/cluster endpoints across nodes.
 - `sharding-3x2-smoke.sh`
   - Probes both local clusters for sharding health and authoritative-vs-foreign write routing.
+- `proposal-surfaces-3x2.sh`
+  - Starts or reuses a local 3x2 cluster and runs bounded write/delete/stability coverage for mock-mode proposal surfaces.
 - `test-binary-upload.sh`
   - Exercises binary/IPFS upload flow.
 
@@ -25,6 +27,9 @@ Focused validation scripts for local validator clusters.
 
 # 3x2 sharding smoke
 ./sharding-3x2-smoke.sh
+
+# Comprehensive 3x2 proposal-surface coverage
+bash ./proposal-surfaces-3x2.sh
 
 # Binary/IPFS flow
 ./test-binary-upload.sh

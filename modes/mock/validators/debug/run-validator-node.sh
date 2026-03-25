@@ -148,6 +148,11 @@ PROPOSAL_PERSISTENCE_ENABLED="${OAK_PROPOSAL_PERSISTENCE_ENABLED:-true}"
 PROPOSAL_PERSISTENCE_FLUSH_MS="${OAK_PROPOSAL_PERSISTENCE_FLUSH_MS:-1000}"
 PROPOSAL_PERSISTENCE_FLUSH_BATCH="${OAK_PROPOSAL_PERSISTENCE_FLUSH_BATCH:-500}"
 QUEUE_TUNING_SYSTEM_PROP_FALLBACK="${OAK_QUEUE_TUNING_SYSTEM_PROP_FALLBACK:-true}"
+RATE_LIMIT_ENABLED="${OAK_RATE_LIMIT_ENABLED:-}"
+RATE_LIMIT_REQUESTS_PER_SECOND="${OAK_RATE_LIMIT_REQUESTS_PER_SECOND:-}"
+RATE_LIMIT_BURST_SIZE="${OAK_RATE_LIMIT_BURST_SIZE:-}"
+RATE_LIMIT_GLOBAL_RPS="${OAK_RATE_LIMIT_GLOBAL_RPS:-}"
+RATE_LIMIT_WRITE_RPS="${OAK_RATE_LIMIT_WRITE_RPS:-}"
 mkdir -p "$(dirname "$AERON_DIR_BASE")"
 
 write_queue_tuning_osgi_cfg() {
@@ -330,6 +335,23 @@ if [ "$QUEUE_TUNING_SYSTEM_PROP_FALLBACK" = "true" ]; then
     queue_tuning_jvm_args="-Doak.proposal.persistence.enabled=$PROPOSAL_PERSISTENCE_ENABLED -Doak.proposal.persistence.flush.ms=$PROPOSAL_PERSISTENCE_FLUSH_MS -Doak.proposal.persistence.flush.batch=$PROPOSAL_PERSISTENCE_FLUSH_BATCH -Doak.proposal.batch.max=$PROPOSAL_BATCH_MAX -Doak.proposal.finalization.chunk.size=$PROPOSAL_FINALIZATION_CHUNK_SIZE -Doak.proposal.finalization.chunk.delay.ms=$PROPOSAL_FINALIZATION_CHUNK_DELAY_MS -Doak.consensus.max.pending.messages=$CONSENSUS_MAX_PENDING_MESSAGES -Doak.consensus.backpressure.timeout.ms=$CONSENSUS_BACKPRESSURE_TIMEOUT_MS"
 fi
 
+rate_limit_jvm_args=""
+if [ -n "$RATE_LIMIT_ENABLED" ]; then
+    rate_limit_jvm_args="$rate_limit_jvm_args -Drate.limit.enabled=$RATE_LIMIT_ENABLED"
+fi
+if [ -n "$RATE_LIMIT_REQUESTS_PER_SECOND" ]; then
+    rate_limit_jvm_args="$rate_limit_jvm_args -Drate.limit.requests.per.second=$RATE_LIMIT_REQUESTS_PER_SECOND"
+fi
+if [ -n "$RATE_LIMIT_BURST_SIZE" ]; then
+    rate_limit_jvm_args="$rate_limit_jvm_args -Drate.limit.burst.size=$RATE_LIMIT_BURST_SIZE"
+fi
+if [ -n "$RATE_LIMIT_GLOBAL_RPS" ]; then
+    rate_limit_jvm_args="$rate_limit_jvm_args -Drate.limit.global.rps=$RATE_LIMIT_GLOBAL_RPS"
+fi
+if [ -n "$RATE_LIMIT_WRITE_RPS" ]; then
+    rate_limit_jvm_args="$rate_limit_jvm_args -Drate.limit.write.rps=$RATE_LIMIT_WRITE_RPS"
+fi
+
 aeron_session_jvm_args=""
 if [ "${OAK_CLUSTER_MAX_CONCURRENT_SESSIONS:-0}" -gt 0 ] 2>/dev/null; then
     aeron_session_jvm_args="-Doak.cluster.max.concurrent.sessions=$OAK_CLUSTER_MAX_CONCURRENT_SESSIONS"
@@ -360,6 +382,7 @@ exec java \
   -Dipfs.local.gateway.base="$IPFS_LOCAL_GATEWAY_BASE" \
   -Doak.health.peerProbeMode="$HEALTH_PEER_PROBE_MODE" \
   $queue_tuning_jvm_args \
+  $rate_limit_jvm_args \
   $aeron_session_jvm_args \
   $EXTRA_JAVA_OPTS \
   ${BEACON_API_KEY:+-Dbeacon.api.key="$BEACON_API_KEY"} \

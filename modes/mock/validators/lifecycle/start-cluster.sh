@@ -65,7 +65,7 @@ usage() {
 Usage: $(basename "$0") [--fresh] [--build] [--cluster-size 3|5] [--mock-epoch-seconds N] [--reset-cluster-wallet] [--no-caffeinate] [--wait-seconds N]
 
 Options:
-  --fresh            Stop validators/proxy, clean Aeron runtime dirs, then start clean.
+  --fresh            Stop validators/proxy, wipe validator runtime state, clean Aeron dirs, then start clean.
   --build            Build consensus jars before startup (oak-segment-consensus + oak-segment-agentic).
   --cluster-size N   Aeron member count for mock cluster (3 or 5). Default: $CLUSTER_SIZE.
   --mock-epoch-seconds N  Mock epoch duration in seconds (default: $MOCK_EPOCH_SECONDS).
@@ -467,6 +467,43 @@ cleanup_aeron_runtime() {
   fi
 }
 
+cleanup_validator_runtime_state() {
+  local cleaned_count=0
+  echo "• Cleaning validator runtime state"
+
+  for node in "${NODES[@]}"; do
+    local store_dir="$CLUSTER_RUNTIME_ROOT/validator-$node"
+    local entry
+    local removed_any=false
+
+    [ -d "$store_dir" ] || continue
+
+    shopt -s nullglob dotglob
+    for entry in "$store_dir"/*; do
+      case "$(basename "$entry")" in
+        validator-keystore.properties)
+          continue
+          ;;
+      esac
+
+      echo "  - Removing: $entry"
+      rm -rf "$entry" 2>/dev/null && cleaned_count=$((cleaned_count + 1)) || true
+      removed_any=true
+    done
+    shopt -u nullglob dotglob
+
+    if [ "$removed_any" = false ]; then
+      echo "  - No runtime state under: $store_dir"
+    fi
+  done
+
+  if [ "$cleaned_count" -gt 0 ]; then
+    echo "• Cleaned $cleaned_count validator runtime directory(ies)"
+  else
+    echo "• No validator runtime state to clean"
+  fi
+}
+
 reset_active_runtime_logs() {
   [ "$RESET_CLUSTER_TEST_LOGS" = "true" ] || return 0
 
@@ -539,6 +576,7 @@ preflight_cleanup() {
   port_list+=("$OPS_PROXY_PORT")
   kill_ports "${port_list[@]}"
 
+  cleanup_validator_runtime_state
   cleanup_aeron_runtime
   reset_active_runtime_logs
 }
@@ -559,6 +597,39 @@ build_consensus_jars() {
     cd "$jr_oak_dir"
     mvn -pl oak-segment-consensus,oak-segment-agentic -am package -DskipTests
   )
+}
+
+consensus_jar_is_stale() {
+  local consensus_jar="$OAK_ROOT/jackrabbit-oak/oak-segment-consensus/target/oak-segment-consensus.jar"
+  local -a watch_roots=(
+    "$OAK_ROOT/jackrabbit-oak/oak-segment-consensus/src/main/java"
+    "$OAK_ROOT/jackrabbit-oak/oak-segment-agentic/src/main/java"
+  )
+
+  if [ ! -f "$consensus_jar" ]; then
+    return 0
+  fi
+
+  local root
+  for root in "${watch_roots[@]}"; do
+    if [ -d "$root" ] && find "$root" -type f -newer "$consensus_jar" -print -quit | grep -q .; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+warn_if_consensus_jar_stale() {
+  if [ "$BUILD_ON_START" = "true" ]; then
+    return 0
+  fi
+
+  if consensus_jar_is_stale; then
+    echo "⚠️  oak-segment-consensus.jar appears stale relative to runtime sources."
+    echo "   Launch will use the existing jar unless you pass --build."
+    echo "   This can reproduce fixed runtime bugs during mock/test runs."
+  fi
 }
 
 ipfs_api_is_ready() {
@@ -709,6 +780,8 @@ fi
 if ! ensure_ipfs_ready; then
   exit 1
 fi
+
+warn_if_consensus_jar_stale
 
 if [ "$BUILD_ON_START" = "true" ]; then
   build_consensus_jars

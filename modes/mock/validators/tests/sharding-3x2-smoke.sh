@@ -11,6 +11,8 @@ WALLET_A="${WALLET_A:-0x1100000000000000000000000000000000000000}"
 WALLET_B="${WALLET_B:-0x8800000000000000000000000000000000000000}"
 READ_TIMEOUT_SECONDS="${READ_TIMEOUT_SECONDS:-30}"
 READ_POLL_INTERVAL_SECONDS="${READ_POLL_INTERVAL_SECONDS:-1}"
+NO_QUORUM_RETRY_MAX="${NO_QUORUM_RETRY_MAX:-15}"
+NO_QUORUM_RETRY_DELAY_SECONDS="${NO_QUORUM_RETRY_DELAY_SECONDS:-2}"
 
 REQUEST_STATUS=""
 REQUEST_LOCATION=""
@@ -82,33 +84,104 @@ fetch_json() {
   printf '%s\n%s\n' "$code" "$body"
 }
 
+random_proposal_id() {
+  local proposal_id
+  proposal_id="$(openssl rand -hex 32 2>/dev/null || python3 - <<'PY'
+import secrets
+print(secrets.token_hex(32))
+PY
+)"
+  printf '0x%s\n' "$proposal_id"
+}
+
 submit_write() {
   local base_url="$1"
   local wallet="$2"
   local label="$3"
   local body_file
   local header_file
+  local no_quorum_attempt=0
   body_file="$(mktemp)"
   header_file="$(mktemp)"
 
   local tx_hash
+  local proposal_id
   local signature
   tx_hash="0x$(openssl rand -hex 32 2>/dev/null || date +%s%N)"
+  proposal_id="$(random_proposal_id)"
   signature="0x$(openssl rand -hex 65 2>/dev/null || printf '%0130d' 0)"
 
-  REQUEST_STATUS="$(curl -s -D "$header_file" -o "$body_file" -w "%{http_code}" \
-    -X POST "${base_url}/v1/propose-write" \
-    -H "Content-Type: application/x-www-form-urlencoded" \
-    -d "walletAddress=${wallet}" \
-    -d "ethereumTxHash=${tx_hash}" \
-    -d "contentType=page" \
-    -d "message=[3x2 smoke] ${label}" \
-    -d "signature=${signature}" \
-    -d "paymentTier=standard" || echo "000")"
-  REQUEST_BODY="$(cat "$body_file")"
-  REQUEST_LOCATION="$(awk 'BEGIN{IGNORECASE=1} /^Location:/ {print $2}' "$header_file" | tr -d '\r' | tail -n 1)"
+  while :; do
+    REQUEST_STATUS="$(curl -s -D "$header_file" -o "$body_file" -w "%{http_code}" \
+      -X POST "${base_url}/v1/propose-write" \
+      -H "Content-Type: application/x-www-form-urlencoded" \
+      -d "walletAddress=${wallet}" \
+      -d "proposalId=${proposal_id}" \
+      -d "ethereumTxHash=${tx_hash}" \
+      -d "contentType=page" \
+      -d "message=[3x2 smoke] ${label}" \
+      -d "signature=${signature}" \
+      -d "paymentTier=standard" || echo "000")"
+    REQUEST_BODY="$(cat "$body_file")"
+    REQUEST_LOCATION="$(awk 'BEGIN{IGNORECASE=1} /^Location:/ {print $2}' "$header_file" | tr -d '\r' | tail -n 1)"
+
+    if [ "$REQUEST_STATUS" = "503" ] && [[ "$REQUEST_BODY" == *'"code":"service_unavailable"'* ]] &&
+      [[ "$REQUEST_BODY" == *"no_quorum"* ]] && [ "$no_quorum_attempt" -lt "$NO_QUORUM_RETRY_MAX" ]; then
+      no_quorum_attempt=$((no_quorum_attempt + 1))
+      echo "⏳ ${label}: cluster reported no_quorum (attempt ${no_quorum_attempt}/${NO_QUORUM_RETRY_MAX}), retrying in ${NO_QUORUM_RETRY_DELAY_SECONDS}s"
+      sleep "$NO_QUORUM_RETRY_DELAY_SECONDS"
+      continue
+    fi
+
+    break
+  done
 
   rm -f "$body_file" "$header_file"
+}
+
+current_role_on_port() {
+  local port="$1"
+  local body
+  local role
+  body="$(curl -s "http://127.0.0.1:${port}/v1/consensus/status" || true)"
+  role="$(extract_json_field "$body" "currentRole")"
+  if [ -n "$role" ]; then
+    printf '%s\n' "$role"
+    return 0
+  fi
+
+  body="$(curl -s "http://127.0.0.1:${port}/health" || true)"
+  extract_json_field "$body" "currentRole"
+}
+
+resolve_leader_port() {
+  local cluster_name="$1"
+  local cluster_size="$2"
+  local http_base_port="$3"
+  local http_port_step="$4"
+  local deadline
+  deadline=$((SECONDS + READ_TIMEOUT_SECONDS))
+
+  while [ "$SECONDS" -le "$deadline" ]; do
+    local leader_port=""
+    local leader_count=0
+    local port
+    while IFS= read -r port; do
+      if [ "$(current_role_on_port "$port")" = "LEADER" ]; then
+        leader_port="$port"
+        leader_count=$((leader_count + 1))
+      fi
+    done < <(cluster_ports "$cluster_size" "$http_base_port" "$http_port_step")
+
+    if [ "$leader_count" -eq 1 ] && [ -n "$leader_port" ]; then
+      printf '%s\n' "$leader_port"
+      return 0
+    fi
+    sleep "$READ_POLL_INTERVAL_SECONDS"
+  done
+
+  echo "❌ ${cluster_name} leader resolution timed out"
+  exit 1
 }
 
 cluster_ports() {
@@ -335,7 +408,9 @@ echo ""
 read_cluster_state "$CLUSTER_B_CONFIG" "Cluster B Health" "80-ff" "128"
 echo ""
 
-submit_write "http://127.0.0.1:${A_HTTP_BASE}" "$WALLET_A" "local-write-a"
+leader_port="$(resolve_leader_port "cluster-a" "$A_SIZE" "$A_HTTP_BASE" "$A_HTTP_STEP")"
+echo "✅ cluster-a local submit leader: port=${leader_port}"
+submit_write "http://127.0.0.1:${leader_port}" "$WALLET_A" "local-write-a"
 assert_local_write_result "$REQUEST_STATUS" "$REQUEST_LOCATION" "cluster-a" "$A_SIZE" "$A_HTTP_BASE" "$A_HTTP_STEP"
 MESSAGE_A="[3x2 smoke] local-write-a"
 
@@ -346,7 +421,9 @@ assert_prefix "$REQUEST_LOCATION" "http://127.0.0.1:${A_HTTP_BASE}/v1/propose-wr
 wait_for_cluster_wallet_message "cluster-a" "$A_SIZE" "$A_HTTP_BASE" "$A_HTTP_STEP" "$WALLET_A" "$MESSAGE_A" "local wallet visible"
 wait_for_cluster_wallet_message "cluster-b" "$B_SIZE" "$B_HTTP_BASE" "$B_HTTP_STEP" "$WALLET_A" "$MESSAGE_A" "remote wallet visible"
 
-submit_write "http://127.0.0.1:${B_HTTP_BASE}" "$WALLET_B" "local-write-b"
+leader_port="$(resolve_leader_port "cluster-b" "$B_SIZE" "$B_HTTP_BASE" "$B_HTTP_STEP")"
+echo "✅ cluster-b local submit leader: port=${leader_port}"
+submit_write "http://127.0.0.1:${leader_port}" "$WALLET_B" "local-write-b"
 assert_local_write_result "$REQUEST_STATUS" "$REQUEST_LOCATION" "cluster-b" "$B_SIZE" "$B_HTTP_BASE" "$B_HTTP_STEP"
 MESSAGE_B="[3x2 smoke] local-write-b"
 

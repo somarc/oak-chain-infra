@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/_cluster_test_lib.sh"
 
 QUORUM_STOP_MODE="${QUORUM_STOP_MODE:-crash}"
+QUORUM_TEST_WALLET="${QUORUM_TEST_WALLET:-0x3333333333333333333333333333333333333333}"
 STOPPED_NODES=()
 
 restore_cluster() {
@@ -14,9 +15,23 @@ restore_cluster() {
       start_node "$node" || true
     fi
   done
-  wait_all_nodes_up 90 || true
+  if ! wait_all_nodes_up 90; then
+    log "QUORUM_TEST recovery timed out waiting for all nodes up"
+    return 1
+  fi
+  if ! wait_all_nodes_cluster_healthy 120; then
+    log "QUORUM_TEST recovery timed out waiting for clusterHealthy=true on all nodes"
+    return 1
+  fi
+  local recovered_leader
+  recovered_leader=$(find_leader_port || true)
+  if [ -z "$recovered_leader" ]; then
+    log "QUORUM_TEST recovery did not produce a leader"
+    return 1
+  fi
+  log "QUORUM_TEST recovery leader=${recovered_leader}"
 }
-trap restore_cluster EXIT
+trap 'restore_cluster || true' EXIT
 
 record_stopped_node() {
   local node=$1
@@ -63,7 +78,7 @@ if [ "$has_quorum" != "false" ]; then
   exit 1
 fi
 
-submit_result=$(submit_write "${HOST}:${leader_port}" "0x3333333333333333333333333333333333333333" "QUORUM_LOSS_$(date +%s)")
+submit_result=$(submit_write "${HOST}:${leader_port}" "$QUORUM_TEST_WALLET" "QUORUM_LOSS_$(date +%s)")
 submit_code=$(echo "$submit_result" | cut -d'|' -f1)
 submit_body=$(echo "$submit_result" | cut -d'|' -f4-)
 
@@ -75,3 +90,10 @@ if [ "$submit_code" = "200" ] || [ "$submit_code" = "202" ]; then
 fi
 
 log "SUCCESS quorum loss correctly reported and write refused"
+
+if ! restore_cluster; then
+  log "QUORUM_TEST cluster recovery failed"
+  exit 1
+fi
+
+trap - EXIT

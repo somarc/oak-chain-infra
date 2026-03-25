@@ -391,22 +391,36 @@ print(secrets.token_hex(int(sys.argv[1])))
 PY
 }
 
+random_proposal_id() {
+  printf '0x%s\n' "$(random_hex 32)"
+}
+
 submit_write() {
   local base=$1
   local wallet=$2
   local label=$3
+  local organization=${4:-}
   local tx_hash="0x$(random_hex 32)"
   local signature="0x$(random_hex 65)"
+  local proposal_id
+  proposal_id=$(random_proposal_id)
   local response
-  response=$(curl -s -w "\n%{http_code}" -X POST "$base/v1/propose-write" \
-    "${HEADER_ARGS[@]}" \
-    -H "Content-Type: application/x-www-form-urlencoded" \
-    -d "walletAddress=${wallet}" \
-    -d "ethereumTxHash=${tx_hash}" \
-    -d "contentType=page" \
-    -d "message=${label}" \
-    -d "signature=${signature}" \
-    -d "paymentTier=standard")
+  local curl_args=(
+    curl -s -w "\n%{http_code}" -X POST "$base/v1/propose-write"
+    "${HEADER_ARGS[@]}"
+    -H "Content-Type: application/x-www-form-urlencoded"
+    -d "walletAddress=${wallet}"
+    -d "proposalId=${proposal_id}"
+    -d "ethereumTxHash=${tx_hash}"
+    -d "contentType=page"
+    -d "message=${label}"
+    -d "signature=${signature}"
+    -d "paymentTier=standard"
+  )
+  if [ -n "$organization" ]; then
+    curl_args+=(-d "organization=${organization}")
+  fi
+  response=$("${curl_args[@]}")
   local code
   code=$(echo "$response" | tail -n1)
   local body
@@ -416,6 +430,32 @@ submit_write() {
   local storage_path
   storage_path=$(json_field "$body" "storagePath")
   printf '%s|%s|%s|%s\n' "$code" "$op_id" "$storage_path" "$body"
+}
+
+submit_delete() {
+  local base=$1
+  local wallet=$2
+  local storage_path=$3
+  local tx_hash="0x$(random_hex 32)"
+  local signature="0x$(random_hex 65)"
+  local proposal_id
+  proposal_id=$(random_proposal_id)
+  local response
+  response=$(curl -s -w "\n%{http_code}" -X POST "$base/v1/propose-delete" \
+    "${HEADER_ARGS[@]}" \
+    -H "Content-Type: application/x-www-form-urlencoded" \
+    --data-urlencode "walletAddress=${wallet}" \
+    --data-urlencode "proposalId=${proposal_id}" \
+    --data-urlencode "signature=${signature}" \
+    --data-urlencode "contentPath=${storage_path}" \
+    --data-urlencode "ethereumTxHash=${tx_hash}")
+  local code
+  code=$(echo "$response" | tail -n1)
+  local body
+  body=$(echo "$response" | sed '$d')
+  local op_id
+  op_id=$(json_field "$body" "operationId")
+  printf '%s|%s|%s\n' "$code" "$op_id" "$body"
 }
 
 wait_operation_committed() {
@@ -458,6 +498,14 @@ path_visible() {
   [ "$(json_field "$body" "path")" = "$storage_path" ]
 }
 
+path_absent() {
+  local node=$1
+  local storage_path=$2
+  local encoded
+  encoded=$(encode_path "$storage_path")
+  [ "$(http_code "$(node_base "$node")/api/explore?path=${encoded}")" = "404" ]
+}
+
 wait_path_visible() {
   local node=$1
   local storage_path=$2
@@ -465,6 +513,21 @@ wait_path_visible() {
   local elapsed=0
   while [ "$elapsed" -lt "$timeout_seconds" ]; do
     if path_visible "$node" "$storage_path"; then
+      return 0
+    fi
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+  return 1
+}
+
+wait_path_absent() {
+  local node=$1
+  local storage_path=$2
+  local timeout_seconds=${3:-$REJOIN_WAIT_SECONDS}
+  local elapsed=0
+  while [ "$elapsed" -lt "$timeout_seconds" ]; do
+    if path_absent "$node" "$storage_path"; then
       return 0
     fi
     sleep 2
