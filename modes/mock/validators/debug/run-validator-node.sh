@@ -143,6 +143,7 @@ PROPOSAL_FINALIZATION_CHUNK_SIZE="${OAK_PROPOSAL_FINALIZATION_CHUNK_SIZE:-25}"
 PROPOSAL_FINALIZATION_CHUNK_DELAY_MS="${OAK_PROPOSAL_FINALIZATION_CHUNK_DELAY_MS:-0}"
 CONSENSUS_MAX_PENDING_MESSAGES="${OAK_CONSENSUS_MAX_PENDING_MESSAGES:-10000}"
 CONSENSUS_BACKPRESSURE_TIMEOUT_MS="${OAK_CONSENSUS_BACKPRESSURE_TIMEOUT_MS:-30000}"
+OAK_CLUSTER_MAX_CONCURRENT_SESSIONS="${OAK_CLUSTER_MAX_CONCURRENT_SESSIONS:-32}"
 PROPOSAL_PERSISTENCE_ENABLED="${OAK_PROPOSAL_PERSISTENCE_ENABLED:-true}"
 PROPOSAL_PERSISTENCE_FLUSH_MS="${OAK_PROPOSAL_PERSISTENCE_FLUSH_MS:-1000}"
 PROPOSAL_PERSISTENCE_FLUSH_BATCH="${OAK_PROPOSAL_PERSISTENCE_FLUSH_BATCH:-500}"
@@ -294,6 +295,7 @@ echo "Aeron Base Port: $CLUSTER_BASE_PORT"
 echo "Mock Epoch Duration: ${MOCK_EPOCH_DURATION_SECONDS}s"
 echo "Log File: $LOG_FILE"
 echo "Queue Tuning (target): persistence.enabled=$PROPOSAL_PERSISTENCE_ENABLED, flush.ms=$PROPOSAL_PERSISTENCE_FLUSH_MS, flush.batch=$PROPOSAL_PERSISTENCE_FLUSH_BATCH, batch.max=$PROPOSAL_BATCH_MAX, finalization.chunk.size=$PROPOSAL_FINALIZATION_CHUNK_SIZE, finalization.chunk.delay.ms=$PROPOSAL_FINALIZATION_CHUNK_DELAY_MS, max.pending.messages=$CONSENSUS_MAX_PENDING_MESSAGES, backpressure.timeout.ms=$CONSENSUS_BACKPRESSURE_TIMEOUT_MS"
+echo "Aeron Max Concurrent Sessions: $OAK_CLUSTER_MAX_CONCURRENT_SESSIONS"
 echo "Queue Tuning JVM fallback: $QUEUE_TUNING_SYSTEM_PROP_FALLBACK"
 echo "Peer Probe Mode: $HEALTH_PEER_PROBE_MODE"
 if [ -n "$EXTRA_JAVA_OPTS" ]; then
@@ -328,6 +330,11 @@ if [ "$QUEUE_TUNING_SYSTEM_PROP_FALLBACK" = "true" ]; then
     queue_tuning_jvm_args="-Doak.proposal.persistence.enabled=$PROPOSAL_PERSISTENCE_ENABLED -Doak.proposal.persistence.flush.ms=$PROPOSAL_PERSISTENCE_FLUSH_MS -Doak.proposal.persistence.flush.batch=$PROPOSAL_PERSISTENCE_FLUSH_BATCH -Doak.proposal.batch.max=$PROPOSAL_BATCH_MAX -Doak.proposal.finalization.chunk.size=$PROPOSAL_FINALIZATION_CHUNK_SIZE -Doak.proposal.finalization.chunk.delay.ms=$PROPOSAL_FINALIZATION_CHUNK_DELAY_MS -Doak.consensus.max.pending.messages=$CONSENSUS_MAX_PENDING_MESSAGES -Doak.consensus.backpressure.timeout.ms=$CONSENSUS_BACKPRESSURE_TIMEOUT_MS"
 fi
 
+aeron_session_jvm_args=""
+if [ "${OAK_CLUSTER_MAX_CONCURRENT_SESSIONS:-0}" -gt 0 ] 2>/dev/null; then
+    aeron_session_jvm_args="-Doak.cluster.max.concurrent.sessions=$OAK_CLUSTER_MAX_CONCURRENT_SESSIONS"
+fi
+
 # Run the validator, redirecting output to log file
 # Aeron Cluster requires access to internal Java APIs for Agrona Unsafe access
 exec java \
@@ -353,6 +360,7 @@ exec java \
   -Dipfs.local.gateway.base="$IPFS_LOCAL_GATEWAY_BASE" \
   -Doak.health.peerProbeMode="$HEALTH_PEER_PROBE_MODE" \
   $queue_tuning_jvm_args \
+  $aeron_session_jvm_args \
   $EXTRA_JAVA_OPTS \
   ${BEACON_API_KEY:+-Dbeacon.api.key="$BEACON_API_KEY"} \
   ${BEACON_API_URL:+-Dbeacon.api.url="$BEACON_API_URL"} \

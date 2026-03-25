@@ -60,7 +60,7 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 # Patterns aligned to recent production-style failure modes.
 PATTERN_IPFS='Failed to initialize IPFS BlobStore|Couldn.t connect to IPFS daemon|DataStoreException.*IPFS'
 PATTERN_STANDBY='StandbyClientSync|Connection refused: /127\.0\.0\.1:8091|SegmentNotFoundException'
-PATTERN_AERON='Failed to connect to Aeron cluster|cluster connect timeout|AeronException|MediaDriver.*crash|Back pressure'
+PATTERN_AERON='Failed to connect to Aeron cluster|cluster connect timeout|AeronException|MediaDriver.*crash|Back pressure|concurrent session limit|owned_session_timeout|keepalive_failed|service_loop_error|send failure for|not connected for'
 PATTERN_RATE='Rate limit exceeded|429 Too Many Requests'
 PATTERN_QUEUE='CRITICAL: Queue depth|backpressure|Queue.*critical|mempool.*full'
 PATTERN_FATAL=' FATAL: |Exception|OutOfMemoryError|Shutting down global store server|ERROR '
