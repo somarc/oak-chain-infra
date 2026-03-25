@@ -139,6 +139,18 @@ STORE_DIR="$HOME/oak-chain/validator-$NODE_ID"
 # Create store directory
 mkdir -p "$STORE_DIR"
 
+resolve_aeron_dir_base() {
+    if [ -n "${AERON_DIR_BASE:-}" ]; then
+        echo "${AERON_DIR_BASE%/}"
+        return
+    fi
+    if [ -n "${AERON_RAMDISK_ROOT:-}" ]; then
+        echo "${AERON_RAMDISK_ROOT%/}/sepolia/aeron-media"
+        return
+    fi
+    echo "$HOME/oak-chain/aeron"
+}
+
 # Log directory
 LOG_DIR="$HOME/oak-chain/logs"
 mkdir -p "$LOG_DIR"
@@ -146,11 +158,13 @@ LOG_FILE="$LOG_DIR/validator-$NODE_ID.log"
 
 # Aeron cluster configuration
 CLUSTER_BASE_PORT=9000
-AERON_DIR="$HOME/oak-chain/aeron-$NODE_ID"
+AERON_DIR_BASE="$(resolve_aeron_dir_base)"
+AERON_DIR="${AERON_DIR:-${AERON_DIR_BASE}-${NODE_ID}-driver}"
 BLOBSTORE_TYPE="${BLOBSTORE_TYPE:-ipfs}"
 IPFS_API_ENDPOINT="${IPFS_API_ENDPOINT:-/ip4/127.0.0.1/tcp/5001}"
 IPFS_GATEWAY_BASE="${IPFS_GATEWAY_BASE:-https://ipfs.io/ipfs/}"
 IPFS_LOCAL_GATEWAY_BASE="${IPFS_LOCAL_GATEWAY_BASE:-http://127.0.0.1:8099/ipfs/}"
+HEALTH_PEER_PROBE_MODE="${OAK_HEALTH_PEER_PROBE_MODE:-http}"
 AERON_SOCKET_SNDBUF="${AERON_SOCKET_SNDBUF:-16384}"
 AERON_SOCKET_RCVBUF="${AERON_SOCKET_RCVBUF:-16384}"
 AERON_RCV_INITIAL_WINDOW="${AERON_RCV_INITIAL_WINDOW:-16384}"
@@ -164,6 +178,7 @@ PROPOSAL_PERSISTENCE_ENABLED="${OAK_PROPOSAL_PERSISTENCE_ENABLED:-true}"
 PROPOSAL_PERSISTENCE_FLUSH_MS="${OAK_PROPOSAL_PERSISTENCE_FLUSH_MS:-1000}"
 PROPOSAL_PERSISTENCE_FLUSH_BATCH="${OAK_PROPOSAL_PERSISTENCE_FLUSH_BATCH:-500}"
 QUEUE_TUNING_SYSTEM_PROP_FALLBACK="${OAK_QUEUE_TUNING_SYSTEM_PROP_FALLBACK:-true}"
+mkdir -p "$(dirname "$AERON_DIR_BASE")"
 
 write_queue_tuning_osgi_cfg() {
     local store_dir="$1"
@@ -297,12 +312,18 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "HTTP Port: $HTTP_PORT"
 echo "Store Dir: $STORE_DIR"
 echo "Aeron Dir: $AERON_DIR"
+if [ -n "${AERON_RAMDISK_ROOT:-}" ]; then
+    echo "Aeron Storage: ramdisk root=${AERON_RAMDISK_ROOT}"
+else
+    echo "Aeron Storage: disk"
+fi
 echo "Peers: $PEERS"
 echo "Cluster Size: $AERON_CLUSTER_SIZE"
 echo "Epoch Duration Override: ${MOCK_EPOCH_DURATION_SECONDS}s"
 echo "Log File: $LOG_FILE"
 echo "Queue Tuning (target): persistence.enabled=$PROPOSAL_PERSISTENCE_ENABLED, flush.ms=$PROPOSAL_PERSISTENCE_FLUSH_MS, flush.batch=$PROPOSAL_PERSISTENCE_FLUSH_BATCH, batch.max=$PROPOSAL_BATCH_MAX, finalization.chunk.size=$PROPOSAL_FINALIZATION_CHUNK_SIZE, finalization.chunk.delay.ms=$PROPOSAL_FINALIZATION_CHUNK_DELAY_MS, max.pending.messages=$CONSENSUS_MAX_PENDING_MESSAGES, backpressure.timeout.ms=$CONSENSUS_BACKPRESSURE_TIMEOUT_MS"
 echo "Queue Tuning JVM fallback: $QUEUE_TUNING_SYSTEM_PROP_FALLBACK"
+echo "Peer Probe Mode: $HEALTH_PEER_PROBE_MODE"
 echo ""
 echo "📦 JAR Files:"
 echo "  Consensus JAR: $JAR_FILE"
@@ -343,6 +364,8 @@ java \
   -Daeron.cluster.nodeId=$NODE_ID \
   -Daeron.cluster.hostnames="$HOSTNAMES" \
   -Daeron.cluster.basePort=$CLUSTER_BASE_PORT \
+  -Daeron.dir="$AERON_DIR_BASE" \
+  -Daeron.dir.name="$AERON_DIR" \
   -Daeron.cluster.bootstrap=false \
   -Daeron.socket.so_sndbuf="$AERON_SOCKET_SNDBUF" \
   -Daeron.socket.so_rcvbuf="$AERON_SOCKET_RCVBUF" \
@@ -353,6 +376,7 @@ java \
   -Dipfs.api.endpoint="$IPFS_API_ENDPOINT" \
   -Dipfs.gateway.base="$IPFS_GATEWAY_BASE" \
   -Dipfs.local.gateway.base="$IPFS_LOCAL_GATEWAY_BASE" \
+  -Doak.health.peerProbeMode="$HEALTH_PEER_PROBE_MODE" \
   $queue_tuning_jvm_args \
   ${BEACON_API_KEY:+-Dbeacon.api.key="$BEACON_API_KEY"} \
   ${BEACON_API_URL:+-Dbeacon.api.url="$BEACON_API_URL"} \

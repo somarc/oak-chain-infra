@@ -33,18 +33,20 @@ ipfs_process_running() {
 echo "cluster:${CLUSTER_NAME} runtime-root=${CLUSTER_RUNTIME_ROOT}"
 
 for port in "${PORTS[@]}"; do
-  url="$HOST:$port/health"
+  url="$HOST:$port/health/local"
   body_file="/tmp/oak-health-$port.json"
   code=$(curl -s -o "$body_file" -w "%{http_code}" "$url" || echo "000")
   if [ "$code" = "000" ] && [ "$HOST" = "http://localhost" ]; then
     # Fallback for environments where localhost resolution/path differs from loopback literal.
-    code=$(curl -s -o "$body_file" -w "%{http_code}" "http://127.0.0.1:$port/health" || echo "000")
+    code=$(curl -s -o "$body_file" -w "%{http_code}" "http://127.0.0.1:$port/health/local" || echo "000")
   fi
   if [ "$code" != "200" ]; then
     echo "validator:$port status=DOWN http=$code"
     continue
   fi
-  role=$(python3 - "$body_file" <<'PY'
+  cluster_body_file="/tmp/oak-cluster-health-$port.json"
+  cluster_code=$(curl -s -o "$cluster_body_file" -w "%{http_code}" "$HOST:$port/health" || echo "000")
+  role=$(python3 - "$cluster_body_file" <<'PY'
 import json
 import pathlib
 import sys
@@ -65,7 +67,22 @@ except Exception:
 PY
 )
   IFS='|' read -r role sharding_enabled local_prefixes remote_mount_count separated <<<"$role"
-  echo "validator:$port status=UP role=$role sharding=$sharding_enabled local-prefixes=$local_prefixes remote-mounts=$remote_mount_count separated=$separated"
+  cluster_healthy="unknown"
+  if [ -f "$cluster_body_file" ]; then
+    cluster_healthy=$(python3 - "$cluster_body_file" <<'PY'
+import json
+import pathlib
+import sys
+p = pathlib.Path(sys.argv[1])
+try:
+    data = json.loads(p.read_text())
+    print(str(data.get('clusterHealthy', data.get('success', False))).lower())
+except Exception:
+    print('unknown')
+PY
+)
+  fi
+  echo "validator:$port status=UP role=$role clusterHealthy=$cluster_healthy clusterHttp=$cluster_code sharding=$sharding_enabled local-prefixes=$local_prefixes remote-mounts=$remote_mount_count separated=$separated"
 done
 
 ipfs_api_code="$(curl -s -X POST -o /tmp/oak-ipfs-api.json -w "%{http_code}" --max-time 2 "$IPFS_API_HTTP/api/v0/version" || echo 000)"

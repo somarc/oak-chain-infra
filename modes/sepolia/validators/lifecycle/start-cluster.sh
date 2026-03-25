@@ -37,6 +37,16 @@ HTTP_PORTS=()
 mkdir -p "$PID_DIR" "$LOG_DIR"
 export OAK_ROOT
 
+resolved_aeron_dir_base() {
+  if [ -n "${AERON_DIR_BASE:-}" ]; then
+    echo "${AERON_DIR_BASE%/}"
+    return
+  fi
+  if [ -n "${AERON_RAMDISK_ROOT:-}" ]; then
+    echo "${AERON_RAMDISK_ROOT%/}/sepolia/aeron-media"
+  fi
+}
+
 usage() {
   cat <<EOF
 Usage: $(basename "$0") [--fresh] [--build] [--cluster-size 3|5] [--config path] [--rpc-url URL] [--contract-address 0x...] [--reset-cluster-wallet] [--no-caffeinate] [--wait-seconds N]
@@ -71,6 +81,7 @@ Environment:
   OAK_CONSENSUS_BACKPRESSURE_TIMEOUT_MS Backpressure timeout ms (OSGi cfg + optional JVM fallback)
   OAK_QUEUE_TUNING_SYSTEM_PROP_FALLBACK true|false (default true). Keep JVM -D fallback while validating OSGi pickup.
   MODE_CONFIG_FILE                      Sepolia mode env file (default: $MODE_CONFIG_FILE)
+  AERON_RAMDISK_ROOT                    Optional ramdisk root for derived Aeron dirs (example: /Volumes/OakAeron)
 EOF
 }
 
@@ -349,8 +360,10 @@ kill_ports() {
 
 cleanup_aeron_runtime() {
   local username
+  local custom_aeron_dir_base
   local cleaned_count=0
   username="$(whoami)"
+  custom_aeron_dir_base="$(resolved_aeron_dir_base)"
   echo "• Cleaning Aeron runtime directories"
   for node in "${NODES[@]}"; do
     local path
@@ -364,13 +377,13 @@ cleanup_aeron_runtime() {
       echo "  - Removing: $path"
       rm -rf "$path" 2>/dev/null || true
     fi
-    if [ -n "${AERON_DIR_BASE:-}" ]; then
-      path="${AERON_DIR_BASE}-${node}-driver"
+    if [ -n "$custom_aeron_dir_base" ]; then
+      path="${custom_aeron_dir_base}-${node}-driver"
       if [ -d "$path" ]; then
         echo "  - Removing: $path"
         rm -rf "$path" 2>/dev/null || true
       fi
-      path="${AERON_DIR_BASE}-${node}"
+      path="${custom_aeron_dir_base}-${node}"
       if [ -d "$path" ]; then
         echo "  - Removing: $path"
         rm -rf "$path" 2>/dev/null || true

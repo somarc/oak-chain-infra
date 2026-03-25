@@ -108,6 +108,18 @@ STORE_DIR="$CLUSTER_RUNTIME_ROOT/validator-$NODE_ID"
 # Create store directory
 mkdir -p "$STORE_DIR"
 
+resolve_aeron_dir_base() {
+    if [ -n "${AERON_DIR_BASE:-}" ]; then
+        echo "${AERON_DIR_BASE%/}"
+        return
+    fi
+    if [ -n "${AERON_RAMDISK_ROOT:-}" ]; then
+        echo "${AERON_RAMDISK_ROOT%/}/${CLUSTER_NAME}/aeron-media"
+        return
+    fi
+    echo "$STORE_DIR/aeron-media"
+}
+
 # Log directory
 LOG_DIR="${LOG_DIR:-$CLUSTER_RUNTIME_ROOT/logs}"
 mkdir -p "$LOG_DIR"
@@ -115,12 +127,13 @@ LOG_FILE="$LOG_DIR/validator-$NODE_ID.log"
 
 # Aeron cluster configuration
 CLUSTER_BASE_PORT="${AERON_CLUSTER_BASE_PORT:-9000}"
-AERON_DIR_BASE="${AERON_DIR_BASE:-$STORE_DIR/aeron-media}"
+AERON_DIR_BASE="$(resolve_aeron_dir_base)"
 AERON_DIR="${AERON_DIR:-${AERON_DIR_BASE}-${NODE_ID}-driver}"
 BLOBSTORE_TYPE="${BLOBSTORE_TYPE:-ipfs}"
 IPFS_API_ENDPOINT="${IPFS_API_ENDPOINT:-/ip4/127.0.0.1/tcp/5001}"
 IPFS_GATEWAY_BASE="${IPFS_GATEWAY_BASE:-http://127.0.0.1:8099/ipfs/}"
 IPFS_LOCAL_GATEWAY_BASE="${IPFS_LOCAL_GATEWAY_BASE:-http://127.0.0.1:8099/ipfs/}"
+HEALTH_PEER_PROBE_MODE="${OAK_HEALTH_PEER_PROBE_MODE:-http}"
 AERON_SOCKET_SNDBUF="${AERON_SOCKET_SNDBUF:-16384}"
 AERON_SOCKET_RCVBUF="${AERON_SOCKET_RCVBUF:-16384}"
 AERON_RCV_INITIAL_WINDOW="${AERON_RCV_INITIAL_WINDOW:-16384}"
@@ -134,6 +147,7 @@ PROPOSAL_PERSISTENCE_ENABLED="${OAK_PROPOSAL_PERSISTENCE_ENABLED:-true}"
 PROPOSAL_PERSISTENCE_FLUSH_MS="${OAK_PROPOSAL_PERSISTENCE_FLUSH_MS:-1000}"
 PROPOSAL_PERSISTENCE_FLUSH_BATCH="${OAK_PROPOSAL_PERSISTENCE_FLUSH_BATCH:-500}"
 QUEUE_TUNING_SYSTEM_PROP_FALLBACK="${OAK_QUEUE_TUNING_SYSTEM_PROP_FALLBACK:-true}"
+mkdir -p "$(dirname "$AERON_DIR_BASE")"
 
 write_queue_tuning_osgi_cfg() {
     local store_dir="$1"
@@ -269,6 +283,11 @@ echo "HTTP Port: $HTTP_PORT"
 echo "HTTP Base Port: $HTTP_BASE_PORT"
 echo "Store Dir: $STORE_DIR"
 echo "Aeron Dir: $AERON_DIR"
+if [ -n "${AERON_RAMDISK_ROOT:-}" ]; then
+    echo "Aeron Storage: ramdisk root=${AERON_RAMDISK_ROOT}"
+else
+    echo "Aeron Storage: disk"
+fi
 echo "Peers: $PEERS"
 echo "Cluster Size: $AERON_CLUSTER_SIZE"
 echo "Aeron Base Port: $CLUSTER_BASE_PORT"
@@ -276,6 +295,7 @@ echo "Mock Epoch Duration: ${MOCK_EPOCH_DURATION_SECONDS}s"
 echo "Log File: $LOG_FILE"
 echo "Queue Tuning (target): persistence.enabled=$PROPOSAL_PERSISTENCE_ENABLED, flush.ms=$PROPOSAL_PERSISTENCE_FLUSH_MS, flush.batch=$PROPOSAL_PERSISTENCE_FLUSH_BATCH, batch.max=$PROPOSAL_BATCH_MAX, finalization.chunk.size=$PROPOSAL_FINALIZATION_CHUNK_SIZE, finalization.chunk.delay.ms=$PROPOSAL_FINALIZATION_CHUNK_DELAY_MS, max.pending.messages=$CONSENSUS_MAX_PENDING_MESSAGES, backpressure.timeout.ms=$CONSENSUS_BACKPRESSURE_TIMEOUT_MS"
 echo "Queue Tuning JVM fallback: $QUEUE_TUNING_SYSTEM_PROP_FALLBACK"
+echo "Peer Probe Mode: $HEALTH_PEER_PROBE_MODE"
 if [ -n "$EXTRA_JAVA_OPTS" ]; then
     echo "Extra JVM Opts: $EXTRA_JAVA_OPTS"
 fi
@@ -331,6 +351,7 @@ exec java \
   -Dipfs.api.endpoint="$IPFS_API_ENDPOINT" \
   -Dipfs.gateway.base="$IPFS_GATEWAY_BASE" \
   -Dipfs.local.gateway.base="$IPFS_LOCAL_GATEWAY_BASE" \
+  -Doak.health.peerProbeMode="$HEALTH_PEER_PROBE_MODE" \
   $queue_tuning_jvm_args \
   $EXTRA_JAVA_OPTS \
   ${BEACON_API_KEY:+-Dbeacon.api.key="$BEACON_API_KEY"} \

@@ -56,6 +56,16 @@ else
   NODES=(0 1 2 3 4)
 fi
 
+resolved_aeron_dir_base() {
+  if [ -n "${AERON_DIR_BASE:-}" ]; then
+    echo "${AERON_DIR_BASE%/}"
+    return
+  fi
+  if [ -n "${AERON_RAMDISK_ROOT:-}" ]; then
+    echo "${AERON_RAMDISK_ROOT%/}/${CLUSTER_NAME}/aeron-media"
+  fi
+}
+
 for node in "${NODES[@]}"; do
   HTTP_PORTS+=($((VALIDATOR_HTTP_BASE_PORT + (node * VALIDATOR_HTTP_PORT_STEP))))
   HTTP_PORTS+=($((VALIDATOR_HTTP_BASE_PORT + 1 + (node * VALIDATOR_HTTP_PORT_STEP))))
@@ -111,8 +121,10 @@ kill_ports() {
 
 cleanup_aeron_runtime() {
   local username
+  local custom_aeron_dir_base
   local cleaned_count=0
   username="$(whoami)"
+  custom_aeron_dir_base="$(resolved_aeron_dir_base)"
   echo "• Cleaning Aeron runtime directories"
   for node in "${NODES[@]}"; do
     local path
@@ -136,13 +148,13 @@ cleanup_aeron_runtime() {
       echo "  - Removing: $path"
       rm -rf "$path" 2>/dev/null || true
     fi
-    if [ -n "${AERON_DIR_BASE:-}" ]; then
-      path="${AERON_DIR_BASE}-${node}-driver"
+    if [ -n "$custom_aeron_dir_base" ]; then
+      path="${custom_aeron_dir_base}-${node}-driver"
       if [ -d "$path" ]; then
         echo "  - Removing: $path"
         rm -rf "$path" 2>/dev/null || true
       fi
-      path="${AERON_DIR_BASE}-${node}"
+      path="${custom_aeron_dir_base}-${node}"
       if [ -d "$path" ]; then
         echo "  - Removing: $path"
         rm -rf "$path" 2>/dev/null || true

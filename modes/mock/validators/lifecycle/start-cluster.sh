@@ -50,6 +50,16 @@ HTTP_PORTS=()
 mkdir -p "$PID_DIR" "$LOG_DIR"
 export OAK_ROOT
 
+resolved_aeron_dir_base() {
+  if [ -n "${AERON_DIR_BASE:-}" ]; then
+    echo "${AERON_DIR_BASE%/}"
+    return
+  fi
+  if [ -n "${AERON_RAMDISK_ROOT:-}" ]; then
+    echo "${AERON_RAMDISK_ROOT%/}/${CLUSTER_NAME}/aeron-media"
+  fi
+}
+
 usage() {
   cat <<EOF
 Usage: $(basename "$0") [--fresh] [--build] [--cluster-size 3|5] [--mock-epoch-seconds N] [--reset-cluster-wallet] [--no-caffeinate] [--wait-seconds N]
@@ -78,6 +88,7 @@ Environment:
   OAK_VALIDATOR_HTTP_PORT_STEP Port step between validators (default: $VALIDATOR_HTTP_PORT_STEP)
   AERON_CLUSTER_BASE_PORT    Base Aeron cluster port block (default: $AERON_CLUSTER_BASE_PORT)
   AERON_DIR_BASE             Base Aeron directory path for per-node MediaDriver dirs (default: $CLUSTER_RUNTIME_ROOT/validator-N/aeron-media)
+  AERON_RAMDISK_ROOT         Optional ramdisk root for derived Aeron dirs (example: /Volumes/OakAeron)
   AERON_GLOBAL_TMP_CLEANUP   true|false aggressive global /tmp Aeron cleanup (default: $AERON_GLOBAL_TMP_CLEANUP)
   OAK_PROPOSAL_BATCH_MAX                Queue sender batch max (OSGi cfg + optional JVM fallback)
   OAK_PROPOSAL_FINALIZATION_CHUNK_SIZE  Finalization chunk size (OSGi cfg + optional JVM fallback)
@@ -370,8 +381,10 @@ PY
 
 cleanup_aeron_runtime() {
   local username
+  local custom_aeron_dir_base
   local cleaned_count=0
   username="$(whoami)"
+  custom_aeron_dir_base="$(resolved_aeron_dir_base)"
   echo "• Cleaning Aeron runtime directories"
   for node in "${NODES[@]}"; do
     local path
@@ -395,13 +408,13 @@ cleanup_aeron_runtime() {
       echo "  - Removing: $path"
       rm -rf "$path" 2>/dev/null || true
     fi
-    if [ -n "${AERON_DIR_BASE:-}" ]; then
-      path="${AERON_DIR_BASE}-${node}-driver"
+    if [ -n "$custom_aeron_dir_base" ]; then
+      path="${custom_aeron_dir_base}-${node}-driver"
       if [ -d "$path" ]; then
         echo "  - Removing: $path"
         rm -rf "$path" 2>/dev/null || true
       fi
-      path="${AERON_DIR_BASE}-${node}"
+      path="${custom_aeron_dir_base}-${node}"
       if [ -d "$path" ]; then
         echo "  - Removing: $path"
         rm -rf "$path" 2>/dev/null || true
