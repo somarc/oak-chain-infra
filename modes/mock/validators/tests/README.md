@@ -99,3 +99,71 @@ bash ./proposal-surfaces-3x2.sh
 bash ./mock-scale-staircase.sh
 ./test-binary-upload.sh
 ```
+
+## Exact Run Commands
+
+Run all commands from the repo root:
+
+```bash
+cd /Users/mhess/aem/aem-code/OAK
+```
+
+Start local IPFS in one terminal:
+
+```bash
+cd /Users/mhess/aem/aem-code/OAK
+ipfs daemon
+```
+
+Run the full staircase acceptance suite in another terminal:
+
+```bash
+cd /Users/mhess/aem/aem-code/OAK
+AUTO_START_IPFS=false \
+bash oak-chain-infra/modes/mock/validators/tests/suites/mock-scale-staircase.sh
+```
+
+Run the longer staircase plus soak variant:
+
+```bash
+cd /Users/mhess/aem/aem-code/OAK
+AUTO_START_IPFS=false \
+RUN_WARM_FAILOVER=true \
+WARM_FAILOVER_CYCLES=3 \
+SOAK_CYCLES=8 \
+SOAK_WRITE_COUNT_PER_ORG=8 \
+SOAK_BINARY_INTERVAL=2 \
+bash oak-chain-infra/modes/mock/validators/tests/suites/mock-scale-staircase.sh
+```
+
+Run the focused single-cluster 3-node acceptance gate:
+
+```bash
+cd /Users/mhess/aem/aem-code/OAK
+AUTO_START_IPFS=false \
+CLUSTER_CONFIG=/Users/mhess/aem/aem-code/OAK/oak-chain-infra/modes/mock/validators/config/single-cluster-3.env \
+bash oak-chain-infra/modes/mock/validators/tests/surfaces/proposal-surfaces-single-cluster.sh
+```
+
+Run the focused single-cluster 5-node acceptance gate:
+
+```bash
+cd /Users/mhess/aem/aem-code/OAK
+AUTO_START_IPFS=false \
+CLUSTER_CONFIG=/Users/mhess/aem/aem-code/OAK/oak-chain-infra/modes/mock/validators/config/single-cluster-5.env \
+bash oak-chain-infra/modes/mock/validators/tests/surfaces/proposal-surfaces-single-cluster.sh
+```
+
+Run the primary 3x2 proposal-surface acceptance gate:
+
+```bash
+cd /Users/mhess/aem/aem-code/OAK
+AUTO_START_IPFS=false \
+bash oak-chain-infra/modes/mock/validators/tests/surfaces/proposal-surfaces-3x2.sh
+```
+
+Artifacts:
+
+- `mock-scale-staircase.sh` defaults to `/tmp/oak-mock-scale-staircase-artifacts`
+- `proposal-surfaces-single-cluster.sh` defaults to `/tmp/oak-proposal-surfaces-single-cluster-artifacts`
+- `proposal-surfaces-3x2.sh` defaults to `/tmp/oak-proposal-surfaces-3x2-artifacts`
