@@ -362,7 +362,12 @@ run_binary_upload() {
 run_warm_failover() {
   local cluster_config="$1"
   local cycles="$2"
-  run_with_cluster_env "$cluster_config" env WARM_FAILOVER_CYCLES="$cycles" \
+  local follower_wallet="${3:-}"
+  local leader_wallet="${4:-}"
+  run_with_cluster_env "$cluster_config" env \
+    WARM_FAILOVER_CYCLES="$cycles" \
+    FOLLOWER_TEST_WALLET="$follower_wallet" \
+    LEADER_TEST_WALLET="$leader_wallet" \
     bash "$TESTS_DIR/stability/aeron-warm-failover-smoke.sh"
 }
 
@@ -458,7 +463,7 @@ phase_single_cluster() {
     run_logged "${phase_name} binary ipfs" run_binary_upload "${phase_name}" "$cluster_config" "$binary_wallet"
   fi
   if [ "$RUN_WARM_FAILOVER" = "true" ]; then
-    run_logged "${phase_name} warm failover" run_warm_failover "$cluster_config" "$WARM_FAILOVER_CYCLES"
+    run_logged "${phase_name} warm failover" run_warm_failover "$cluster_config" "$WARM_FAILOVER_CYCLES" "$failover_follower_wallet" "$failover_leader_wallet"
   fi
   run_logged "${phase_name} status" run_status_cluster "$cluster_config"
   phase_complete "$phase_name"
@@ -486,8 +491,8 @@ phase_dual_cluster() {
   run_logged "${phase_name} cluster-a quorum envelope" run_quorum_envelope "$DUAL_CLUSTER_A_CONFIG" "0x5500000000000000000000000000000000000000"
   run_logged "${phase_name} cluster-b quorum envelope" run_quorum_envelope "$DUAL_CLUSTER_B_CONFIG" "0xaa00000000000000000000000000000000000000"
   if [ "$RUN_WARM_FAILOVER" = "true" ]; then
-    run_logged "${phase_name} cluster-a warm failover" run_warm_failover "$DUAL_CLUSTER_A_CONFIG" "$WARM_FAILOVER_CYCLES"
-    run_logged "${phase_name} cluster-b warm failover" run_warm_failover "$DUAL_CLUSTER_B_CONFIG" "$WARM_FAILOVER_CYCLES"
+    run_logged "${phase_name} cluster-a warm failover" run_warm_failover "$DUAL_CLUSTER_A_CONFIG" "$WARM_FAILOVER_CYCLES" "0x1111111111111111111111111111111111111111" "0x2222222222222222222222222222222222222222"
+    run_logged "${phase_name} cluster-b warm failover" run_warm_failover "$DUAL_CLUSTER_B_CONFIG" "$WARM_FAILOVER_CYCLES" "0x8800000000000000000000000000000000000000" "0x9900000000000000000000000000000000000000"
   fi
   run_logged "${phase_name} cluster-a status" run_status_cluster "$DUAL_CLUSTER_A_CONFIG"
   run_logged "${phase_name} cluster-b status" run_status_cluster "$DUAL_CLUSTER_B_CONFIG"
@@ -536,9 +541,9 @@ phase_triple_cluster() {
   run_logged "${phase_name} cluster-c quorum envelope" run_quorum_envelope "$FABRIC_CLUSTER_C_CONFIG" "0xab00000000000000000000000000000000000000"
 
   if [ "$RUN_WARM_FAILOVER" = "true" ]; then
-    run_logged "${phase_name} cluster-a warm failover" run_warm_failover "$FABRIC_CLUSTER_A_CONFIG" "$WARM_FAILOVER_CYCLES"
-    run_logged "${phase_name} cluster-b warm failover" run_warm_failover "$FABRIC_CLUSTER_B_CONFIG" "$WARM_FAILOVER_CYCLES"
-    run_logged "${phase_name} cluster-c warm failover" run_warm_failover "$FABRIC_CLUSTER_C_CONFIG" "$WARM_FAILOVER_CYCLES"
+    run_logged "${phase_name} cluster-a warm failover" run_warm_failover "$FABRIC_CLUSTER_A_CONFIG" "$WARM_FAILOVER_CYCLES" "0x1111111111111111111111111111111111111111" "0x2222222222222222222222222222222222222222"
+    run_logged "${phase_name} cluster-b warm failover" run_warm_failover "$FABRIC_CLUSTER_B_CONFIG" "$WARM_FAILOVER_CYCLES" "0x7700000000000000000000000000000000000000" "0x8800000000000000000000000000000000000000"
+    run_logged "${phase_name} cluster-c warm failover" run_warm_failover "$FABRIC_CLUSTER_C_CONFIG" "$WARM_FAILOVER_CYCLES" "0xdd00000000000000000000000000000000000000" "0xee00000000000000000000000000000000000000"
   fi
 
   run_logged "${phase_name} cluster-a status" run_status_cluster "$FABRIC_CLUSTER_A_CONFIG"

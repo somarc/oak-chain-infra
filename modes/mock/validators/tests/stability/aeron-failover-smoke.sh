@@ -8,9 +8,56 @@ source "$TESTS_DIR/lib/_cluster_test_lib.sh"
 FOLLOWER_STOP_MODE="${FOLLOWER_STOP_MODE:-${FAILOVER_STOP_MODE:-crash}}"
 LEADER_STOP_MODE="${LEADER_STOP_MODE:-${FAILOVER_STOP_MODE:-crash}}"
 POST_REJOIN_SETTLE_SECONDS="${POST_REJOIN_SETTLE_SECONDS:-45}"
-FOLLOWER_TEST_WALLET="${FOLLOWER_TEST_WALLET:-0x1111111111111111111111111111111111111111}"
-LEADER_TEST_WALLET="${LEADER_TEST_WALLET:-0x2222222222222222222222222222222222222222}"
+FOLLOWER_TEST_WALLET="${FOLLOWER_TEST_WALLET:-}"
+LEADER_TEST_WALLET="${LEADER_TEST_WALLET:-}"
+DEFAULT_FOLLOWER_TEST_WALLET="0x1111111111111111111111111111111111111111"
+DEFAULT_LEADER_TEST_WALLET="0x2222222222222222222222222222222222222222"
 STOPPED_NODES=()
+
+derive_local_prefix_range() {
+  python3 - <<'PY'
+import os
+import re
+
+opts = os.environ.get("EXTRA_JAVA_OPTS", "")
+match = re.search(r"-Doak\.sharding\.local\.prefixes=([0-9a-fA-F]{2})(?:-([0-9a-fA-F]{2}))?", opts)
+if match:
+    start = match.group(1).lower()
+    end = (match.group(2) or match.group(1)).lower()
+    print(f"{start}|{end}")
+PY
+}
+
+wallet_for_prefix_decimal() {
+  local prefix_decimal=$1
+  printf '0x%02x%038x\n' "$prefix_decimal" 0
+}
+
+resolve_failover_wallets() {
+  if [ -n "$FOLLOWER_TEST_WALLET" ] && [ -n "$LEADER_TEST_WALLET" ]; then
+    return 0
+  fi
+
+  local prefix_range
+  prefix_range="$(derive_local_prefix_range || true)"
+  if [ -n "$prefix_range" ]; then
+    local start_hex end_hex start_decimal end_decimal leader_decimal
+    start_hex="${prefix_range%%|*}"
+    end_hex="${prefix_range##*|}"
+    start_decimal=$((16#$start_hex))
+    end_decimal=$((16#$end_hex))
+    leader_decimal=$((start_decimal + 1))
+    if [ "$leader_decimal" -gt "$end_decimal" ]; then
+      leader_decimal="$start_decimal"
+    fi
+    FOLLOWER_TEST_WALLET="${FOLLOWER_TEST_WALLET:-$(wallet_for_prefix_decimal "$start_decimal")}"
+    LEADER_TEST_WALLET="${LEADER_TEST_WALLET:-$(wallet_for_prefix_decimal "$leader_decimal")}"
+    return 0
+  fi
+
+  FOLLOWER_TEST_WALLET="${FOLLOWER_TEST_WALLET:-$DEFAULT_FOLLOWER_TEST_WALLET}"
+  LEADER_TEST_WALLET="${LEADER_TEST_WALLET:-$DEFAULT_LEADER_TEST_WALLET}"
+}
 
 restore_cluster() {
   local node
@@ -33,6 +80,9 @@ record_stopped_node() {
   done
   STOPPED_NODES+=("$node")
 }
+
+resolve_failover_wallets
+log "FAILOVER_TEST wallets follower=${FOLLOWER_TEST_WALLET} leader=${LEADER_TEST_WALLET}"
 
 baseline_leader_port=$(find_leader_port || true)
 if [ -z "$baseline_leader_port" ]; then
@@ -72,7 +122,8 @@ follower_op=$(echo "$submit_result" | cut -d'|' -f2)
 follower_path=$(echo "$submit_result" | cut -d'|' -f3)
 
 if [ "$submit_code" != "200" ] && [ "$submit_code" != "202" ]; then
-  log "FOLLOWER_TEST submit failed http=${submit_code}"
+  submit_body=$(echo "$submit_result" | cut -d'|' -f4-)
+  log "FOLLOWER_TEST submit failed http=${submit_code} wallet=${FOLLOWER_TEST_WALLET} body=${submit_body}"
   exit 1
 fi
 
@@ -123,7 +174,8 @@ leader_op=$(echo "$leader_submit" | cut -d'|' -f2)
 leader_path=$(echo "$leader_submit" | cut -d'|' -f3)
 
 if [ "$leader_submit_code" != "200" ] && [ "$leader_submit_code" != "202" ]; then
-  log "LEADER_TEST submit failed http=${leader_submit_code}"
+  leader_submit_body=$(echo "$leader_submit" | cut -d'|' -f4-)
+  log "LEADER_TEST submit failed http=${leader_submit_code} wallet=${LEADER_TEST_WALLET} body=${leader_submit_body}"
   exit 1
 fi
 
