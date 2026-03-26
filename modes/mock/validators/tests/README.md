@@ -197,6 +197,34 @@ AUTO_START_IPFS=false \
 bash oak-chain-infra/modes/mock/validators/tests/surfaces/proposal-surfaces-3x2.sh
 ```
 
+## Latest Validated Result
+
+As of `2026-03-26`, the mock staircase lane is green across staged reruns with
+local IPFS.
+
+Validated phases:
+
+- `phase-01-single-cluster-3`: pass
+- `phase-02-single-cluster-5`: pass
+- `phase-03-dual-5x3`: pass
+- `phase-04-triple-5x3x3`: pass
+- `phase-05-soak`: pass across `12` cycles on the full `5+3+3` fabric
+
+Latest terminal success:
+
+```text
+[2026-03-26 09:53:10] SUCCESS mock-scale-staircase completed
+[2026-03-26 09:53:10] Artifacts written to /tmp/oak-mock-scale-staircase-artifacts
+```
+
+Interpretation:
+
+- This is a correctness-and-recovery proof, not a load or throughput result.
+- The full acceptance picture was established through staged reruns while
+  runtime and harness defects were being corrected.
+- The latest fully successful run covered the final `5+3+3` fabric phase plus
+  the bounded soak lane; earlier phases had already passed in prior reruns.
+
 Artifacts:
 
 - `mock-scale-staircase.sh` defaults to `/tmp/oak-mock-scale-staircase-artifacts`
