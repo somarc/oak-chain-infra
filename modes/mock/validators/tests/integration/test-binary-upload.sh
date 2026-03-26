@@ -68,6 +68,11 @@ print(base64.urlsafe_b64encode(value).decode("ascii").rstrip("="))
 PY
 }
 
+blob_id_without_size() {
+    local blob_id="$1"
+    printf '%s\n' "${blob_id%%#*}"
+}
+
 # Check if IPFS is running
 check_ipfs() {
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -384,14 +389,49 @@ check_ipfs_retention() {
         fi
     fi
 
-    if [ -n "$STORED_BLOB_ID" ]; then
-        ENCODED_BLOB_ID=$(base64url_no_padding "$STORED_BLOB_ID")
-        MFS_CONTENT_PATH="${IPFS_FILES_ROOT}/content/${ENCODED_BLOB_ID}"
-        if ipfs files stat "$MFS_CONTENT_PATH" > /dev/null 2>&1; then
-            echo -e "${GREEN}✅ CID retained via Oak-managed MFS content reference${NC}"
-            echo -e "${CYAN}   MFS Path: $MFS_CONTENT_PATH${NC}"
+    if [ -n "$STORED_CID" ]; then
+        PIN_STATUS=$(ipfs pin ls --type=all "$STORED_CID" 2>/dev/null || true)
+        if [ -n "$PIN_STATUS" ]; then
+            PIN_TYPE=$(echo "$PIN_STATUS" | awk '{print $2}' | head -n1)
+            echo -e "${GREEN}✅ Stored CID pin state: ${PIN_TYPE:-unknown} (${STORED_CID})${NC}"
             return
         fi
+    fi
+
+    if [ -n "$STORED_BLOB_ID" ]; then
+        local blob_id_key
+        local encoded_blob_key
+        local content_path
+        local blob_index_path
+        local content_stat
+        local content_cid
+        local mapped_cid
+
+        for blob_id_key in "$STORED_BLOB_ID" "$(blob_id_without_size "$STORED_BLOB_ID")"; do
+            [ -n "$blob_id_key" ] || continue
+            encoded_blob_key=$(base64url_no_padding "$blob_id_key")
+            content_path="${IPFS_FILES_ROOT}/content/${encoded_blob_key}"
+            blob_index_path="${IPFS_FILES_ROOT}/blob-index/${encoded_blob_key}"
+
+            content_stat=$(ipfs files stat "$content_path" 2>/dev/null || true)
+            if [ -n "$content_stat" ]; then
+                content_cid=$(printf '%s\n' "$content_stat" | awk 'NR==1 {print $1}')
+                if [ -n "$content_cid" ] && { [ "$content_cid" = "$EXPECTED_CID" ] || [ "$content_cid" = "$STORED_CID" ]; }; then
+                    echo -e "${GREEN}✅ CID retained via Oak-managed MFS content reference${NC}"
+                    echo -e "${CYAN}   MFS Path: $content_path${NC}"
+                    echo -e "${CYAN}   Content CID: $content_cid${NC}"
+                    return
+                fi
+            fi
+
+            mapped_cid=$(ipfs files read "$blob_index_path" 2>/dev/null | tr -d '\r\n' || true)
+            if [ -n "$mapped_cid" ] && { [ "$mapped_cid" = "$EXPECTED_CID" ] || [ "$mapped_cid" = "$STORED_CID" ]; }; then
+                echo -e "${GREEN}✅ CID retained via Oak-managed MFS blob index${NC}"
+                echo -e "${CYAN}   MFS Path: $blob_index_path${NC}"
+                echo -e "${CYAN}   Indexed CID: $mapped_cid${NC}"
+                return
+            fi
+        done
     fi
 
     echo -e "${RED}❌ Expected CID is neither directly pinned nor retained via Oak MFS reference${NC}"

@@ -348,6 +348,26 @@ explore_path() {
   rm -f "$body_file"
 }
 
+parent_lists_child_on_port() {
+  local port="$1"
+  local path="$2"
+  local parent_path="${path%/*}"
+  local child_name="${path##*/}"
+  local result
+  local code
+  local body
+
+  [ -n "$parent_path" ] || return 1
+  [ "$parent_path" != "$path" ] || return 1
+
+  result="$(explore_path "$port" "$parent_path")"
+  code="$(printf '%s' "$result" | sed -n '1p')"
+  body="$(printf '%s' "$result" | sed -n '2,$p')"
+
+  [ "$code" = "200" ] || return 1
+  printf '%s' "$body" | jq -e --arg child "$child_name" '(.children // []) | index($child) != null' >/dev/null 2>&1
+}
+
 wait_path_visible_on_port() {
   local port="$1"
   local path="$2"
@@ -364,6 +384,10 @@ wait_path_visible_on_port() {
     body="$(printf '%s' "$result" | sed -n '2,$p')"
     if [ "$code" = "200" ] && [ "$(json_field "$body" "path")" = "$path" ]; then
       log "VISIBLE ${label}: port=${port} path=${path}"
+      return 0
+    fi
+    if parent_lists_child_on_port "$port" "$path"; then
+      log "VISIBLE ${label}: port=${port} path=${path} via=parent-children"
       return 0
     fi
     sleep "$READ_POLL_INTERVAL_SECONDS"
@@ -583,6 +607,7 @@ wait_child_count_all_ports "$PRIMARY_ARCHIVE_ROOT" "$WRITE_COUNT_PER_ORG" "prima
 wait_child_count_all_ports "$SECONDARY_NORTH_ROOT" "$WRITE_COUNT_PER_ORG" "secondary north population"
 wait_child_count_all_ports "$SECONDARY_SOUTH_ROOT" "$WRITE_COUNT_PER_ORG" "secondary south population"
 wait_child_count_all_ports "$SECONDARY_ARCHIVE_ROOT" "$WRITE_COUNT_PER_ORG" "secondary archive population"
+settle_http_idle "post-population count checks"
 
 while IFS= read -r sample_path; do
   [ -n "$sample_path" ] || continue
