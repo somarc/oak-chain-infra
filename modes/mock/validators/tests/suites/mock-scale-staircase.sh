@@ -220,6 +220,7 @@ run_binary_upload() {
   leader_port="$(resolve_leader_port_for_config "$cluster_config")" || fail "${label}: could not resolve leader port for binary test"
   log "BINARY ${label}: leader-port=${leader_port} wallet=${test_wallet}"
   VALIDATOR_URL="http://127.0.0.1:${leader_port}" TEST_WALLET="$test_wallet" \
+    AUTO_START_IPFS="$AUTO_START_IPFS" IPFS_API_HTTP="$IPFS_API_HTTP" \
     bash "$TESTS_DIR/integration/test-binary-upload.sh"
 }
 

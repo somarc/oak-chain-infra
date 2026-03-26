@@ -32,8 +32,16 @@ DEFAULT_BINARY_FILE="${REPO_ROOT}/fixtures/binaries/do-it-live.jpeg"
 BINARY_FILE="${1:-$DEFAULT_BINARY_FILE}"
 TEST_WALLET="${TEST_WALLET:-0x03c6fced478cbbc9a4fab34ef9f40767739d1ff7}"
 WRITE_WAIT_SECONDS="${WRITE_WAIT_SECONDS:-90}"
+AUTO_START_IPFS="${AUTO_START_IPFS:-true}"
+IPFS_API_HTTP="${IPFS_API_HTTP:-http://127.0.0.1:5001}"
+IPFS_READY_TIMEOUT_SECONDS="${IPFS_READY_TIMEOUT_SECONDS:-30}"
 OPERATION_ID=""
 STORAGE_PATH=""
+
+ipfs_api_ready() {
+    local base="$1"
+    curl -s -X POST "${base}/api/v0/version" > /dev/null 2>&1
+}
 
 # Check if IPFS is running
 check_ipfs() {
@@ -46,18 +54,38 @@ check_ipfs() {
         echo -e "${YELLOW}   Install with: brew install kubo${NC}"
         exit 1
     fi
-    
-    if ! curl -s -X POST http://127.0.0.1:5001/api/v0/version > /dev/null 2>&1; then
+
+    echo -e "${CYAN}   Policy: AUTO_START_IPFS=${AUTO_START_IPFS} API=${IPFS_API_HTTP}${NC}"
+
+    if ! ipfs_api_ready "$IPFS_API_HTTP"; then
         echo -e "${YELLOW}⚠️  IPFS daemon not running${NC}"
+        if [ "$AUTO_START_IPFS" != "true" ]; then
+            echo -e "${RED}❌ AUTO_START_IPFS=false and no daemon is reachable at ${IPFS_API_HTTP}${NC}"
+            echo -e "${YELLOW}   Start IPFS separately and retry${NC}"
+            exit 1
+        fi
+
         echo -e "${YELLOW}   Starting IPFS daemon...${NC}"
         ipfs daemon > /dev/null 2>&1 &
-        sleep 2
-        echo -e "${GREEN}✅ IPFS daemon started${NC}"
+
+        local deadline=$(( $(date +%s) + IPFS_READY_TIMEOUT_SECONDS ))
+        while [ "$(date +%s)" -lt "$deadline" ]; do
+            if ipfs_api_ready "$IPFS_API_HTTP"; then
+                echo -e "${GREEN}✅ IPFS daemon started${NC}"
+                break
+            fi
+            sleep 1
+        done
+
+        if ! ipfs_api_ready "$IPFS_API_HTTP"; then
+            echo -e "${RED}❌ IPFS API did not become ready at ${IPFS_API_HTTP}${NC}"
+            exit 1
+        fi
     else
         echo -e "${GREEN}✅ IPFS daemon running${NC}"
     fi
-    
-    IPFS_VERSION=$(curl -s -X POST http://127.0.0.1:5001/api/v0/version | jq -r '.Version' 2>/dev/null || echo "unknown")
+
+    IPFS_VERSION=$(curl -s -X POST "${IPFS_API_HTTP}/api/v0/version" | jq -r '.Version' 2>/dev/null || echo "unknown")
     echo -e "${CYAN}   Version: ${IPFS_VERSION}${NC}"
 }
 
