@@ -75,6 +75,123 @@ fail() {
   exit 1
 }
 
+TOTAL_STEPS=0
+CURRENT_STEP=0
+TOTAL_PHASES=0
+CURRENT_PHASE=0
+CURRENT_PHASE_NAME=""
+
+count_single_cluster_steps() {
+  local total=4
+  if [ "$RUN_BINARY_TESTS" = "true" ]; then
+    total=$((total + 1))
+  fi
+  if [ "$RUN_WARM_FAILOVER" = "true" ]; then
+    total=$((total + 1))
+  fi
+  printf '%s\n' "$total"
+}
+
+count_dual_cluster_steps() {
+  local total=9
+  if [ "$RUN_BINARY_TESTS" = "true" ]; then
+    total=$((total + 2))
+  fi
+  if [ "$RUN_WARM_FAILOVER" = "true" ]; then
+    total=$((total + 2))
+  fi
+  printf '%s\n' "$total"
+}
+
+count_triple_cluster_steps() {
+  local total=14
+  if [ "$RUN_BINARY_TESTS" = "true" ]; then
+    total=$((total + 3))
+  fi
+  if [ "$RUN_WARM_FAILOVER" = "true" ]; then
+    total=$((total + 3))
+  fi
+  printf '%s\n' "$total"
+}
+
+count_soak_steps() {
+  local total=0
+  local cycle
+
+  if ! [[ "$SOAK_CYCLES" =~ ^[0-9]+$ ]] || [ "$SOAK_CYCLES" -le 0 ]; then
+    printf '0\n'
+    return 0
+  fi
+
+  for cycle in $(seq 1 "$SOAK_CYCLES"); do
+    total=$((total + 4))
+    if [ "$RUN_BINARY_TESTS" = "true" ] && [ "$SOAK_BINARY_INTERVAL" -gt 0 ] && [ $((cycle % SOAK_BINARY_INTERVAL)) -eq 0 ]; then
+      total=$((total + 1))
+    fi
+  done
+
+  printf '%s\n' "$total"
+}
+
+compute_total_phases() {
+  local total=0
+  if [ "$RUN_SINGLE_CLUSTER_3_PHASE" = "true" ]; then
+    total=$((total + 1))
+  fi
+  if [ "$RUN_SINGLE_CLUSTER_5_PHASE" = "true" ]; then
+    total=$((total + 1))
+  fi
+  if [ "$RUN_DUAL_CLUSTER_PHASE" = "true" ]; then
+    total=$((total + 1))
+  fi
+  if [ "$RUN_TRIPLE_CLUSTER_PHASE" = "true" ]; then
+    total=$((total + 1))
+    if [[ "$SOAK_CYCLES" =~ ^[0-9]+$ ]] && [ "$SOAK_CYCLES" -gt 0 ]; then
+      total=$((total + 1))
+    fi
+  fi
+  printf '%s\n' "$total"
+}
+
+compute_total_steps() {
+  local total=0
+  if [ "$RUN_SINGLE_CLUSTER_3_PHASE" = "true" ]; then
+    total=$((total + $(count_single_cluster_steps)))
+  fi
+  if [ "$RUN_SINGLE_CLUSTER_5_PHASE" = "true" ]; then
+    total=$((total + $(count_single_cluster_steps)))
+  fi
+  if [ "$RUN_DUAL_CLUSTER_PHASE" = "true" ]; then
+    total=$((total + $(count_dual_cluster_steps)))
+  fi
+  if [ "$RUN_TRIPLE_CLUSTER_PHASE" = "true" ]; then
+    total=$((total + $(count_triple_cluster_steps)))
+    total=$((total + $(count_soak_steps)))
+  fi
+  printf '%s\n' "$total"
+}
+
+progress_percent() {
+  if [ "$TOTAL_STEPS" -le 0 ]; then
+    printf '0\n'
+    return 0
+  fi
+  printf '%s\n' $((CURRENT_STEP * 100 / TOTAL_STEPS))
+}
+
+phase_banner() {
+  local phase_name="$1"
+  local phase_steps="$2"
+  CURRENT_PHASE=$((CURRENT_PHASE + 1))
+  CURRENT_PHASE_NAME="$phase_name"
+  log "PHASE ${CURRENT_PHASE}/${TOTAL_PHASES} ${phase_name} steps=${phase_steps} started"
+}
+
+phase_complete() {
+  local phase_name="$1"
+  log "PHASE ${CURRENT_PHASE}/${TOTAL_PHASES} ${phase_name} completed"
+}
+
 require_cmd() {
   local cmd="$1"
   command -v "$cmd" >/dev/null 2>&1 || fail "Missing required command: ${cmd}"
@@ -122,8 +239,22 @@ run_with_cluster_env() {
 run_logged() {
   local description="$1"
   shift
-  log "RUN ${description}"
-  "$@" 2>&1 | tee -a "$RUN_LOG"
+  local started_at
+  local finished_at
+  local duration
+  local percent
+
+  CURRENT_STEP=$((CURRENT_STEP + 1))
+  percent="$(progress_percent)"
+  started_at="$(date +%s)"
+  log "RUN step=${CURRENT_STEP}/${TOTAL_STEPS} percent=${percent}% phase=${CURRENT_PHASE}/${TOTAL_PHASES} name=${description}"
+  if "$@" 2>&1 | tee -a "$RUN_LOG"; then
+    finished_at="$(date +%s)"
+    duration=$((finished_at - started_at))
+    log "DONE step=${CURRENT_STEP}/${TOTAL_STEPS} percent=${percent}% duration=${duration}s name=${description}"
+  else
+    fail "step=${CURRENT_STEP}/${TOTAL_STEPS} phase=${CURRENT_PHASE}/${TOTAL_PHASES} name=${description} failed"
+  fi
 }
 
 maybe_build_arg() {
@@ -306,6 +437,10 @@ phase_single_cluster() {
   local catchup_wallet="${10}"
   local quorum_wallet="${11}"
   local phase_dir="${ARTIFACT_ROOT}/${phase_name}"
+  local phase_steps
+
+  phase_steps="$(count_single_cluster_steps)"
+  phase_banner "$phase_name" "$phase_steps"
 
   mkdir -p "$phase_dir"
   stop_all_topologies
@@ -322,98 +457,118 @@ phase_single_cluster() {
     run_logged "${phase_name} warm failover" run_warm_failover "$cluster_config" "$WARM_FAILOVER_CYCLES"
   fi
   run_logged "${phase_name} status" run_status_cluster "$cluster_config"
+  phase_complete "$phase_name"
 }
 
 phase_dual_cluster() {
   local phase_dir="${ARTIFACT_ROOT}/phase-03-dual-5x3"
+  local phase_name="phase-03-dual-5x3"
+  local phase_steps
+
+  phase_steps="$(count_dual_cluster_steps)"
+  phase_banner "$phase_name" "$phase_steps"
 
   mkdir -p "$phase_dir"
   stop_all_topologies
-  run_logged "phase-03-dual-5x3 start" start_dual_cluster
-  run_logged "phase-03-dual-5x3 cluster-a validator api smoke" run_validator_api_smoke "$DUAL_CLUSTER_A_CONFIG"
-  run_logged "phase-03-dual-5x3 cluster-b validator api smoke" run_validator_api_smoke "$DUAL_CLUSTER_B_CONFIG"
-  run_logged "phase-03-dual-5x3 routing smoke" run_dual_cluster_routing
-  run_logged "phase-03-dual-5x3 proposal surfaces" run_dual_cluster_surfaces "${phase_dir}/surfaces"
+  run_logged "${phase_name} start" start_dual_cluster
+  run_logged "${phase_name} cluster-a validator api smoke" run_validator_api_smoke "$DUAL_CLUSTER_A_CONFIG"
+  run_logged "${phase_name} cluster-b validator api smoke" run_validator_api_smoke "$DUAL_CLUSTER_B_CONFIG"
+  run_logged "${phase_name} routing smoke" run_dual_cluster_routing
+  run_logged "${phase_name} proposal surfaces" run_dual_cluster_surfaces "${phase_dir}/surfaces"
   if [ "$RUN_BINARY_TESTS" = "true" ]; then
-    run_logged "phase-03-dual-5x3 binary ipfs cluster-a" run_binary_upload "phase-03-dual-5x3/cluster-a" "$DUAL_CLUSTER_A_CONFIG" "0x1100000000000000000000000000000000000000"
-    run_logged "phase-03-dual-5x3 binary ipfs cluster-b" run_binary_upload "phase-03-dual-5x3/cluster-b" "$DUAL_CLUSTER_B_CONFIG" "0x8800000000000000000000000000000000000000"
+    run_logged "${phase_name} binary ipfs cluster-a" run_binary_upload "${phase_name}/cluster-a" "$DUAL_CLUSTER_A_CONFIG" "0x1100000000000000000000000000000000000000"
+    run_logged "${phase_name} binary ipfs cluster-b" run_binary_upload "${phase_name}/cluster-b" "$DUAL_CLUSTER_B_CONFIG" "0x8800000000000000000000000000000000000000"
   fi
-  run_logged "phase-03-dual-5x3 cluster-a quorum envelope" run_quorum_envelope "$DUAL_CLUSTER_A_CONFIG" "0x5500000000000000000000000000000000000000"
-  run_logged "phase-03-dual-5x3 cluster-b quorum envelope" run_quorum_envelope "$DUAL_CLUSTER_B_CONFIG" "0xaa00000000000000000000000000000000000000"
+  run_logged "${phase_name} cluster-a quorum envelope" run_quorum_envelope "$DUAL_CLUSTER_A_CONFIG" "0x5500000000000000000000000000000000000000"
+  run_logged "${phase_name} cluster-b quorum envelope" run_quorum_envelope "$DUAL_CLUSTER_B_CONFIG" "0xaa00000000000000000000000000000000000000"
   if [ "$RUN_WARM_FAILOVER" = "true" ]; then
-    run_logged "phase-03-dual-5x3 cluster-a warm failover" run_warm_failover "$DUAL_CLUSTER_A_CONFIG" "$WARM_FAILOVER_CYCLES"
-    run_logged "phase-03-dual-5x3 cluster-b warm failover" run_warm_failover "$DUAL_CLUSTER_B_CONFIG" "$WARM_FAILOVER_CYCLES"
+    run_logged "${phase_name} cluster-a warm failover" run_warm_failover "$DUAL_CLUSTER_A_CONFIG" "$WARM_FAILOVER_CYCLES"
+    run_logged "${phase_name} cluster-b warm failover" run_warm_failover "$DUAL_CLUSTER_B_CONFIG" "$WARM_FAILOVER_CYCLES"
   fi
-  run_logged "phase-03-dual-5x3 cluster-a status" run_status_cluster "$DUAL_CLUSTER_A_CONFIG"
-  run_logged "phase-03-dual-5x3 cluster-b status" run_status_cluster "$DUAL_CLUSTER_B_CONFIG"
+  run_logged "${phase_name} cluster-a status" run_status_cluster "$DUAL_CLUSTER_A_CONFIG"
+  run_logged "${phase_name} cluster-b status" run_status_cluster "$DUAL_CLUSTER_B_CONFIG"
+  phase_complete "$phase_name"
 }
 
 phase_triple_cluster() {
   local phase_dir="${ARTIFACT_ROOT}/phase-04-triple-5x3x3"
+  local phase_name="phase-04-triple-5x3x3"
+  local phase_steps
+
+  phase_steps="$(count_triple_cluster_steps)"
+  phase_banner "$phase_name" "$phase_steps"
 
   mkdir -p "$phase_dir"
   stop_all_topologies
-  run_logged "phase-04-triple-5x3x3 start" start_triple_cluster
-  run_logged "phase-04-triple-5x3x3 cluster-a validator api smoke" run_validator_api_smoke "$FABRIC_CLUSTER_A_CONFIG"
-  run_logged "phase-04-triple-5x3x3 cluster-b validator api smoke" run_validator_api_smoke "$FABRIC_CLUSTER_B_CONFIG"
-  run_logged "phase-04-triple-5x3x3 cluster-c validator api smoke" run_validator_api_smoke "$FABRIC_CLUSTER_C_CONFIG"
-  run_logged "phase-04-triple-5x3x3 routing smoke" run_triple_cluster_routing
+  run_logged "${phase_name} start" start_triple_cluster
+  run_logged "${phase_name} cluster-a validator api smoke" run_validator_api_smoke "$FABRIC_CLUSTER_A_CONFIG"
+  run_logged "${phase_name} cluster-b validator api smoke" run_validator_api_smoke "$FABRIC_CLUSTER_B_CONFIG"
+  run_logged "${phase_name} cluster-c validator api smoke" run_validator_api_smoke "$FABRIC_CLUSTER_C_CONFIG"
+  run_logged "${phase_name} routing smoke" run_triple_cluster_routing
 
-  run_logged "phase-04-triple-5x3x3 cluster-a local surfaces" run_single_cluster_surfaces \
+  run_logged "${phase_name} cluster-a local surfaces" run_single_cluster_surfaces \
     "${phase_dir}/cluster-a-surfaces" "$FABRIC_CLUSTER_A_CONFIG" "$FABRIC_LOCAL_WRITE_COUNT_PER_ORG" false \
     "0x1100000000000000000000000000000000000000" "0x2200000000000000000000000000000000000000" "0x3300000000000000000000000000000000000000" \
     "0x1111111111111111111111111111111111111111" "0x2222222222222222222222222222222222222222" "0x4444444444444444444444444444444444444444" "0x5500000000000000000000000000000000000000"
 
-  run_logged "phase-04-triple-5x3x3 cluster-b local surfaces" run_single_cluster_surfaces \
+  run_logged "${phase_name} cluster-b local surfaces" run_single_cluster_surfaces \
     "${phase_dir}/cluster-b-surfaces" "$FABRIC_CLUSTER_B_CONFIG" "$FABRIC_LOCAL_WRITE_COUNT_PER_ORG" false \
     "0x7700000000000000000000000000000000000000" "0x8800000000000000000000000000000000000000" "0x9900000000000000000000000000000000000000" \
     "0x7a00000000000000000000000000000000000000" "0x8b00000000000000000000000000000000000000" "0x9c00000000000000000000000000000000000000" "0xaa00000000000000000000000000000000000000"
 
-  run_logged "phase-04-triple-5x3x3 cluster-c local surfaces" run_single_cluster_surfaces \
+  run_logged "${phase_name} cluster-c local surfaces" run_single_cluster_surfaces \
     "${phase_dir}/cluster-c-surfaces" "$FABRIC_CLUSTER_C_CONFIG" "$FABRIC_LOCAL_WRITE_COUNT_PER_ORG" false \
     "0xdd00000000000000000000000000000000000000" "0xee00000000000000000000000000000000000000" "0xff00000000000000000000000000000000000000" \
     "0xde00000000000000000000000000000000000000" "0xef00000000000000000000000000000000000000" "0xf000000000000000000000000000000000000000" "0xab00000000000000000000000000000000000000"
 
   if [ "$RUN_BINARY_TESTS" = "true" ]; then
-    run_logged "phase-04-triple-5x3x3 binary ipfs cluster-a" run_binary_upload "phase-04-triple-5x3x3/cluster-a" "$FABRIC_CLUSTER_A_CONFIG" "0x1100000000000000000000000000000000000000"
-    run_logged "phase-04-triple-5x3x3 binary ipfs cluster-b" run_binary_upload "phase-04-triple-5x3x3/cluster-b" "$FABRIC_CLUSTER_B_CONFIG" "0x7700000000000000000000000000000000000000"
-    run_logged "phase-04-triple-5x3x3 binary ipfs cluster-c" run_binary_upload "phase-04-triple-5x3x3/cluster-c" "$FABRIC_CLUSTER_C_CONFIG" "0xdd00000000000000000000000000000000000000"
+    run_logged "${phase_name} binary ipfs cluster-a" run_binary_upload "${phase_name}/cluster-a" "$FABRIC_CLUSTER_A_CONFIG" "0x1100000000000000000000000000000000000000"
+    run_logged "${phase_name} binary ipfs cluster-b" run_binary_upload "${phase_name}/cluster-b" "$FABRIC_CLUSTER_B_CONFIG" "0x7700000000000000000000000000000000000000"
+    run_logged "${phase_name} binary ipfs cluster-c" run_binary_upload "${phase_name}/cluster-c" "$FABRIC_CLUSTER_C_CONFIG" "0xdd00000000000000000000000000000000000000"
   fi
 
-  run_logged "phase-04-triple-5x3x3 cluster-a quorum envelope" run_quorum_envelope "$FABRIC_CLUSTER_A_CONFIG" "0x5500000000000000000000000000000000000000"
-  run_logged "phase-04-triple-5x3x3 cluster-b quorum envelope" run_quorum_envelope "$FABRIC_CLUSTER_B_CONFIG" "0xaa00000000000000000000000000000000000000"
-  run_logged "phase-04-triple-5x3x3 cluster-c quorum envelope" run_quorum_envelope "$FABRIC_CLUSTER_C_CONFIG" "0xab00000000000000000000000000000000000000"
+  run_logged "${phase_name} cluster-a quorum envelope" run_quorum_envelope "$FABRIC_CLUSTER_A_CONFIG" "0x5500000000000000000000000000000000000000"
+  run_logged "${phase_name} cluster-b quorum envelope" run_quorum_envelope "$FABRIC_CLUSTER_B_CONFIG" "0xaa00000000000000000000000000000000000000"
+  run_logged "${phase_name} cluster-c quorum envelope" run_quorum_envelope "$FABRIC_CLUSTER_C_CONFIG" "0xab00000000000000000000000000000000000000"
 
   if [ "$RUN_WARM_FAILOVER" = "true" ]; then
-    run_logged "phase-04-triple-5x3x3 cluster-a warm failover" run_warm_failover "$FABRIC_CLUSTER_A_CONFIG" "$WARM_FAILOVER_CYCLES"
-    run_logged "phase-04-triple-5x3x3 cluster-b warm failover" run_warm_failover "$FABRIC_CLUSTER_B_CONFIG" "$WARM_FAILOVER_CYCLES"
-    run_logged "phase-04-triple-5x3x3 cluster-c warm failover" run_warm_failover "$FABRIC_CLUSTER_C_CONFIG" "$WARM_FAILOVER_CYCLES"
+    run_logged "${phase_name} cluster-a warm failover" run_warm_failover "$FABRIC_CLUSTER_A_CONFIG" "$WARM_FAILOVER_CYCLES"
+    run_logged "${phase_name} cluster-b warm failover" run_warm_failover "$FABRIC_CLUSTER_B_CONFIG" "$WARM_FAILOVER_CYCLES"
+    run_logged "${phase_name} cluster-c warm failover" run_warm_failover "$FABRIC_CLUSTER_C_CONFIG" "$WARM_FAILOVER_CYCLES"
   fi
 
-  run_logged "phase-04-triple-5x3x3 cluster-a status" run_status_cluster "$FABRIC_CLUSTER_A_CONFIG"
-  run_logged "phase-04-triple-5x3x3 cluster-b status" run_status_cluster "$FABRIC_CLUSTER_B_CONFIG"
-  run_logged "phase-04-triple-5x3x3 cluster-c status" run_status_cluster "$FABRIC_CLUSTER_C_CONFIG"
+  run_logged "${phase_name} cluster-a status" run_status_cluster "$FABRIC_CLUSTER_A_CONFIG"
+  run_logged "${phase_name} cluster-b status" run_status_cluster "$FABRIC_CLUSTER_B_CONFIG"
+  run_logged "${phase_name} cluster-c status" run_status_cluster "$FABRIC_CLUSTER_C_CONFIG"
+  phase_complete "$phase_name"
 }
 
 phase_soak() {
+  local phase_name="phase-05-soak"
+  local phase_steps
+
   if ! [[ "$SOAK_CYCLES" =~ ^[0-9]+$ ]] || [ "$SOAK_CYCLES" -le 0 ]; then
     return 0
   fi
 
+  phase_steps="$(count_soak_steps)"
+  phase_banner "$phase_name" "$phase_steps"
+
   local cycle
   for cycle in $(seq 1 "$SOAK_CYCLES"); do
     local cycle_dir="${ARTIFACT_ROOT}/phase-05-soak/cycle-${cycle}"
+    log "SOAK cycle ${cycle}/${SOAK_CYCLES} started"
     mkdir -p "$cycle_dir"
-    run_logged "phase-05-soak cycle=${cycle} routing smoke" run_triple_cluster_routing
-    run_logged "phase-05-soak cycle=${cycle} cluster-a local surfaces" run_single_cluster_surfaces \
+    run_logged "${phase_name} cycle=${cycle} routing smoke" run_triple_cluster_routing
+    run_logged "${phase_name} cycle=${cycle} cluster-a local surfaces" run_single_cluster_surfaces \
       "${cycle_dir}/cluster-a-surfaces" "$FABRIC_CLUSTER_A_CONFIG" "$SOAK_WRITE_COUNT_PER_ORG" false \
       "0x1100000000000000000000000000000000000000" "0x2200000000000000000000000000000000000000" "0x3300000000000000000000000000000000000000" \
       "0x1111111111111111111111111111111111111111" "0x2222222222222222222222222222222222222222" "0x4444444444444444444444444444444444444444" "0x5500000000000000000000000000000000000000"
-    run_logged "phase-05-soak cycle=${cycle} cluster-b local surfaces" run_single_cluster_surfaces \
+    run_logged "${phase_name} cycle=${cycle} cluster-b local surfaces" run_single_cluster_surfaces \
       "${cycle_dir}/cluster-b-surfaces" "$FABRIC_CLUSTER_B_CONFIG" "$SOAK_WRITE_COUNT_PER_ORG" false \
       "0x7700000000000000000000000000000000000000" "0x8800000000000000000000000000000000000000" "0x9900000000000000000000000000000000000000" \
       "0x7a00000000000000000000000000000000000000" "0x8b00000000000000000000000000000000000000" "0x9c00000000000000000000000000000000000000" "0xaa00000000000000000000000000000000000000"
-    run_logged "phase-05-soak cycle=${cycle} cluster-c local surfaces" run_single_cluster_surfaces \
+    run_logged "${phase_name} cycle=${cycle} cluster-c local surfaces" run_single_cluster_surfaces \
       "${cycle_dir}/cluster-c-surfaces" "$FABRIC_CLUSTER_C_CONFIG" "$SOAK_WRITE_COUNT_PER_ORG" false \
       "0xdd00000000000000000000000000000000000000" "0xee00000000000000000000000000000000000000" "0xff00000000000000000000000000000000000000" \
       "0xde00000000000000000000000000000000000000" "0xef00000000000000000000000000000000000000" "0xf000000000000000000000000000000000000000" "0xab00000000000000000000000000000000000000"
@@ -421,21 +576,27 @@ phase_soak() {
     if [ "$RUN_BINARY_TESTS" = "true" ] && [ "$SOAK_BINARY_INTERVAL" -gt 0 ] && [ $((cycle % SOAK_BINARY_INTERVAL)) -eq 0 ]; then
       case $(((cycle - 1) % 3)) in
         0)
-          run_logged "phase-05-soak cycle=${cycle} binary ipfs cluster-a" run_binary_upload "phase-05-soak/cluster-a" "$FABRIC_CLUSTER_A_CONFIG" "0x1100000000000000000000000000000000000000"
+          run_logged "${phase_name} cycle=${cycle} binary ipfs cluster-a" run_binary_upload "${phase_name}/cluster-a" "$FABRIC_CLUSTER_A_CONFIG" "0x1100000000000000000000000000000000000000"
           ;;
         1)
-          run_logged "phase-05-soak cycle=${cycle} binary ipfs cluster-b" run_binary_upload "phase-05-soak/cluster-b" "$FABRIC_CLUSTER_B_CONFIG" "0x7700000000000000000000000000000000000000"
+          run_logged "${phase_name} cycle=${cycle} binary ipfs cluster-b" run_binary_upload "${phase_name}/cluster-b" "$FABRIC_CLUSTER_B_CONFIG" "0x7700000000000000000000000000000000000000"
           ;;
         2)
-          run_logged "phase-05-soak cycle=${cycle} binary ipfs cluster-c" run_binary_upload "phase-05-soak/cluster-c" "$FABRIC_CLUSTER_C_CONFIG" "0xdd00000000000000000000000000000000000000"
+          run_logged "${phase_name} cycle=${cycle} binary ipfs cluster-c" run_binary_upload "${phase_name}/cluster-c" "$FABRIC_CLUSTER_C_CONFIG" "0xdd00000000000000000000000000000000000000"
           ;;
       esac
     fi
+    log "SOAK cycle ${cycle}/${SOAK_CYCLES} completed"
   done
+  phase_complete "$phase_name"
 }
+
+TOTAL_PHASES="$(compute_total_phases)"
+TOTAL_STEPS="$(compute_total_steps)"
 
 log "Artifacts: ${ARTIFACT_ROOT}"
 log "IPFS policy: AUTO_START_IPFS=${AUTO_START_IPFS}"
+log "Plan: phases=${TOTAL_PHASES} steps=${TOTAL_STEPS}"
 
 stop_all_topologies
 
