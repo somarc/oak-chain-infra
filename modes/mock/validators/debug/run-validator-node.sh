@@ -298,6 +298,8 @@ echo "Peers: $PEERS"
 echo "Cluster Size: $AERON_CLUSTER_SIZE"
 echo "Aeron Base Port: $CLUSTER_BASE_PORT"
 echo "Mock Epoch Duration: ${MOCK_EPOCH_DURATION_SECONDS}s"
+echo "Cluster Environment: ${OAK_CLUSTER_ENV:-}"
+echo "Aeron Session Timeout Minutes: ${OAK_CLUSTER_SESSION_TIMEOUT_MINUTES:-}"
 echo "Log File: $LOG_FILE"
 echo "Queue Tuning (target): persistence.enabled=$PROPOSAL_PERSISTENCE_ENABLED, flush.ms=$PROPOSAL_PERSISTENCE_FLUSH_MS, flush.batch=$PROPOSAL_PERSISTENCE_FLUSH_BATCH, batch.max=$PROPOSAL_BATCH_MAX, finalization.chunk.size=$PROPOSAL_FINALIZATION_CHUNK_SIZE, finalization.chunk.delay.ms=$PROPOSAL_FINALIZATION_CHUNK_DELAY_MS, max.pending.messages=$CONSENSUS_MAX_PENDING_MESSAGES, backpressure.timeout.ms=$CONSENSUS_BACKPRESSURE_TIMEOUT_MS"
 echo "Aeron Max Concurrent Sessions: $OAK_CLUSTER_MAX_CONCURRENT_SESSIONS"
@@ -355,6 +357,12 @@ fi
 aeron_session_jvm_args=""
 if [ "${OAK_CLUSTER_MAX_CONCURRENT_SESSIONS:-0}" -gt 0 ] 2>/dev/null; then
     aeron_session_jvm_args="-Doak.cluster.max.concurrent.sessions=$OAK_CLUSTER_MAX_CONCURRENT_SESSIONS"
+fi
+if [ -n "${OAK_CLUSTER_ENV:-}" ]; then
+    aeron_session_jvm_args="$aeron_session_jvm_args -Doak.cluster.environment=$OAK_CLUSTER_ENV"
+fi
+if [ "${OAK_CLUSTER_SESSION_TIMEOUT_MINUTES:-0}" -gt 0 ] 2>/dev/null; then
+    aeron_session_jvm_args="$aeron_session_jvm_args -Doak.cluster.session.timeout.minutes=$OAK_CLUSTER_SESSION_TIMEOUT_MINUTES"
 fi
 
 # Run the validator, redirecting output to log file
