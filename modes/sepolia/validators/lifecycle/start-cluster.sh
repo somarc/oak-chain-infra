@@ -47,13 +47,24 @@ resolved_aeron_dir_base() {
   fi
 }
 
+validator_reactor_modules() {
+  local jr_oak_dir="$1"
+  local modules="oak-segment-consensus"
+  if [ -f "$jr_oak_dir/oak-segment-agentic/pom.xml" ] && \
+     [ -f "$jr_oak_dir/pom.xml" ] && \
+     grep -q '<module>oak-segment-agentic</module>' "$jr_oak_dir/pom.xml"; then
+    modules="${modules},oak-segment-agentic"
+  fi
+  echo "$modules"
+}
+
 usage() {
   cat <<EOF
 Usage: $(basename "$0") [--fresh] [--build] [--cluster-size 3|5] [--config path] [--rpc-url URL] [--contract-address 0x...] [--reset-cluster-wallet] [--no-caffeinate] [--wait-seconds N]
 
 Options:
   --fresh            Stop validators/proxy, clean Aeron runtime dirs, then start clean.
-  --build            Build consensus jars before startup (oak-segment-consensus + oak-segment-agentic).
+  --build            Build oak-segment-consensus and optional validator-side modules present in the current branch.
   --cluster-size N   Aeron member count for local cluster (3 or 5). Default: $CLUSTER_SIZE.
   --config path      Sepolia mode env file to source (default: $MODE_CONFIG_FILE).
   --rpc-url URL      Override OAK_BLOCKCHAIN_RPC_URL.
@@ -476,6 +487,8 @@ preflight_cleanup() {
 
 build_consensus_jars() {
   local jr_oak_dir="$OAK_ROOT/jackrabbit-oak"
+  local build_targets=""
+  local build_label=""
   if [ ! -d "$jr_oak_dir" ]; then
     echo "❌ Cannot build: jackrabbit-oak not found at $jr_oak_dir"
     return 1
@@ -485,10 +498,12 @@ build_consensus_jars() {
     return 1
   fi
 
-  echo "• Building oak-segment-consensus and oak-segment-agentic..."
+  build_targets="$(validator_reactor_modules "$jr_oak_dir")"
+  build_label="${build_targets//,/ + }"
+  echo "• Building $build_label..."
   (
     cd "$jr_oak_dir"
-    mvn -pl oak-segment-consensus,oak-segment-agentic -am package -DskipTests
+    mvn -pl "$build_targets" -am package -DskipTests
   )
 }
 

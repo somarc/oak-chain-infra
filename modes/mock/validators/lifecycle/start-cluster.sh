@@ -60,13 +60,24 @@ resolved_aeron_dir_base() {
   fi
 }
 
+validator_reactor_modules() {
+  local jr_oak_dir="$1"
+  local modules="oak-segment-consensus"
+  if [ -f "$jr_oak_dir/oak-segment-agentic/pom.xml" ] && \
+     [ -f "$jr_oak_dir/pom.xml" ] && \
+     grep -q '<module>oak-segment-agentic</module>' "$jr_oak_dir/pom.xml"; then
+    modules="${modules},oak-segment-agentic"
+  fi
+  echo "$modules"
+}
+
 usage() {
   cat <<EOF
 Usage: $(basename "$0") [--fresh] [--build] [--cluster-size 3|5] [--mock-epoch-seconds N] [--reset-cluster-wallet] [--no-caffeinate] [--wait-seconds N]
 
 Options:
   --fresh            Stop validators/proxy, wipe validator runtime state, clean Aeron dirs, then start clean.
-  --build            Build consensus jars before startup (oak-segment-consensus + oak-segment-agentic).
+  --build            Build oak-segment-consensus and optional validator-side modules present in the current branch.
   --cluster-size N   Aeron member count for mock cluster (3 or 5). Default: $CLUSTER_SIZE.
   --mock-epoch-seconds N  Mock epoch duration in seconds (default: $MOCK_EPOCH_SECONDS).
   --reset-cluster-wallet  Delete and regenerate cluster wallet before startup.
@@ -583,6 +594,8 @@ preflight_cleanup() {
 
 build_consensus_jars() {
   local jr_oak_dir="$OAK_ROOT/jackrabbit-oak"
+  local build_targets=""
+  local build_label=""
   if [ ! -d "$jr_oak_dir" ]; then
     echo "❌ Cannot build: jackrabbit-oak not found at $jr_oak_dir"
     return 1
@@ -592,10 +605,12 @@ build_consensus_jars() {
     return 1
   fi
 
-  echo "• Building oak-segment-consensus and oak-segment-agentic..."
+  build_targets="$(validator_reactor_modules "$jr_oak_dir")"
+  build_label="${build_targets//,/ + }"
+  echo "• Building $build_label..."
   (
     cd "$jr_oak_dir"
-    mvn -pl oak-segment-consensus,oak-segment-agentic -am package -DskipTests
+    mvn -pl "$build_targets" -am package -DskipTests
   )
 }
 
@@ -603,8 +618,12 @@ consensus_jar_is_stale() {
   local consensus_jar="$OAK_ROOT/jackrabbit-oak/oak-segment-consensus/target/oak-segment-consensus.jar"
   local -a watch_roots=(
     "$OAK_ROOT/jackrabbit-oak/oak-segment-consensus/src/main/java"
-    "$OAK_ROOT/jackrabbit-oak/oak-segment-agentic/src/main/java"
   )
+  if [ -d "$OAK_ROOT/jackrabbit-oak/oak-segment-agentic/src/main/java" ] && \
+     [ -f "$OAK_ROOT/jackrabbit-oak/pom.xml" ] && \
+     grep -q '<module>oak-segment-agentic</module>' "$OAK_ROOT/jackrabbit-oak/pom.xml"; then
+    watch_roots+=("$OAK_ROOT/jackrabbit-oak/oak-segment-agentic/src/main/java")
+  fi
 
   if [ ! -f "$consensus_jar" ]; then
     return 0

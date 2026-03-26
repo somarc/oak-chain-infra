@@ -12,7 +12,7 @@ Validator-only local operations for Oak Chain Sepolia mode.
 
 - `lifecycle/start-cluster.sh`
   - Launches validator nodes 0/1/2 in background.
-  - Optional `--build` compiles `oak-segment-consensus` + `oak-segment-agentic` before launch.
+  - Optional `--build` compiles `oak-segment-consensus` and any optional validator-side modules present in the current `jackrabbit-oak` branch before launch.
   - Loads `config/sepolia.env` by default (`--config` to override).
   - Requires `OAK_BLOCKCHAIN_RPC_URL` + `OAK_BLOCKCHAIN_CONTRACT_ADDRESS`.
   - Waits for IPFS API readiness before launching validators.

@@ -153,8 +153,12 @@ consensus_jar_is_stale() {
   local consensus_jar="$OAK_ROOT/jackrabbit-oak/oak-segment-consensus/target/oak-segment-consensus.jar"
   local -a watch_roots=(
     "$OAK_ROOT/jackrabbit-oak/oak-segment-consensus/src/main/java"
-    "$OAK_ROOT/jackrabbit-oak/oak-segment-agentic/src/main/java"
   )
+  if [ -d "$OAK_ROOT/jackrabbit-oak/oak-segment-agentic/src/main/java" ] && \
+     [ -f "$OAK_ROOT/jackrabbit-oak/pom.xml" ] && \
+     grep -q '<module>oak-segment-agentic</module>' "$OAK_ROOT/jackrabbit-oak/pom.xml"; then
+    watch_roots+=("$OAK_ROOT/jackrabbit-oak/oak-segment-agentic/src/main/java")
+  fi
 
   if [ ! -f "$consensus_jar" ]; then
     return 0
