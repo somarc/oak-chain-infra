@@ -396,6 +396,48 @@ random_proposal_id() {
   printf '0x%s\n' "$(random_hex 32)"
 }
 
+sharding_local_prefix_range() {
+  python3 - <<'PY'
+import os
+import re
+
+opts = os.environ.get("EXTRA_JAVA_OPTS", "")
+match = re.search(r"-Doak\.sharding\.local\.prefixes=([0-9a-fA-F]{2})(?:-([0-9a-fA-F]{2}))?", opts)
+if match:
+    start = match.group(1).lower()
+    end = (match.group(2) or match.group(1)).lower()
+    print(f"{start}|{end}")
+PY
+}
+
+wallet_for_prefix_decimal() {
+  local prefix_decimal=$1
+  printf '0x%02x%038x\n' "$prefix_decimal" 0
+}
+
+resolve_wallet_for_local_shard() {
+  local default_wallet="$1"
+  local offset="${2:-0}"
+  local prefix_range
+  prefix_range="$(sharding_local_prefix_range || true)"
+
+  if [ -n "$prefix_range" ]; then
+    local start_hex end_hex start_decimal end_decimal target_decimal
+    start_hex="${prefix_range%%|*}"
+    end_hex="${prefix_range##*|}"
+    start_decimal=$((16#$start_hex))
+    end_decimal=$((16#$end_hex))
+    target_decimal=$((start_decimal + offset))
+    if [ "$target_decimal" -gt "$end_decimal" ]; then
+      target_decimal="$end_decimal"
+    fi
+    wallet_for_prefix_decimal "$target_decimal"
+    return 0
+  fi
+
+  printf '%s\n' "$default_wallet"
+}
+
 submit_write() {
   local base=$1
   local wallet=$2

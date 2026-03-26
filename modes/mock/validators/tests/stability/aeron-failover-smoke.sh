@@ -14,49 +14,13 @@ DEFAULT_FOLLOWER_TEST_WALLET="0x1111111111111111111111111111111111111111"
 DEFAULT_LEADER_TEST_WALLET="0x2222222222222222222222222222222222222222"
 STOPPED_NODES=()
 
-derive_local_prefix_range() {
-  python3 - <<'PY'
-import os
-import re
-
-opts = os.environ.get("EXTRA_JAVA_OPTS", "")
-match = re.search(r"-Doak\.sharding\.local\.prefixes=([0-9a-fA-F]{2})(?:-([0-9a-fA-F]{2}))?", opts)
-if match:
-    start = match.group(1).lower()
-    end = (match.group(2) or match.group(1)).lower()
-    print(f"{start}|{end}")
-PY
-}
-
-wallet_for_prefix_decimal() {
-  local prefix_decimal=$1
-  printf '0x%02x%038x\n' "$prefix_decimal" 0
-}
-
 resolve_failover_wallets() {
   if [ -n "$FOLLOWER_TEST_WALLET" ] && [ -n "$LEADER_TEST_WALLET" ]; then
     return 0
   fi
 
-  local prefix_range
-  prefix_range="$(derive_local_prefix_range || true)"
-  if [ -n "$prefix_range" ]; then
-    local start_hex end_hex start_decimal end_decimal leader_decimal
-    start_hex="${prefix_range%%|*}"
-    end_hex="${prefix_range##*|}"
-    start_decimal=$((16#$start_hex))
-    end_decimal=$((16#$end_hex))
-    leader_decimal=$((start_decimal + 1))
-    if [ "$leader_decimal" -gt "$end_decimal" ]; then
-      leader_decimal="$start_decimal"
-    fi
-    FOLLOWER_TEST_WALLET="${FOLLOWER_TEST_WALLET:-$(wallet_for_prefix_decimal "$start_decimal")}"
-    LEADER_TEST_WALLET="${LEADER_TEST_WALLET:-$(wallet_for_prefix_decimal "$leader_decimal")}"
-    return 0
-  fi
-
-  FOLLOWER_TEST_WALLET="${FOLLOWER_TEST_WALLET:-$DEFAULT_FOLLOWER_TEST_WALLET}"
-  LEADER_TEST_WALLET="${LEADER_TEST_WALLET:-$DEFAULT_LEADER_TEST_WALLET}"
+  FOLLOWER_TEST_WALLET="${FOLLOWER_TEST_WALLET:-$(resolve_wallet_for_local_shard "$DEFAULT_FOLLOWER_TEST_WALLET" 0)}"
+  LEADER_TEST_WALLET="${LEADER_TEST_WALLET:-$(resolve_wallet_for_local_shard "$DEFAULT_LEADER_TEST_WALLET" 1)}"
 }
 
 restore_cluster() {

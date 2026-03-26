@@ -6,7 +6,8 @@ TESTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$TESTS_DIR/lib/_cluster_test_lib.sh"
 
 QUORUM_STOP_MODE="${QUORUM_STOP_MODE:-crash}"
-QUORUM_TEST_WALLET="${QUORUM_TEST_WALLET:-0x3333333333333333333333333333333333333333}"
+QUORUM_TEST_WALLET="${QUORUM_TEST_WALLET:-}"
+DEFAULT_QUORUM_TEST_WALLET="0x3333333333333333333333333333333333333333"
 STOPPED_NODES=()
 
 restore_cluster() {
@@ -34,6 +35,8 @@ restore_cluster() {
 }
 trap 'restore_cluster || true' EXIT
 
+QUORUM_TEST_WALLET="${QUORUM_TEST_WALLET:-$(resolve_wallet_for_local_shard "$DEFAULT_QUORUM_TEST_WALLET" 3)}"
+
 record_stopped_node() {
   local node=$1
   local existing
@@ -52,7 +55,7 @@ if [ -z "$leader_port" ]; then
 fi
 leader_node=$(port_to_node "$leader_port")
 
-log "QUORUM_TEST baseline leader=${leader_port}"
+log "QUORUM_TEST baseline leader=${leader_port} wallet=${QUORUM_TEST_WALLET}"
 
 for node in $(seq 0 $((OAK_CLUSTER_SIZE - 1))); do
   if [ "$node" = "$leader_node" ]; then

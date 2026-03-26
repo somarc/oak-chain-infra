@@ -30,7 +30,8 @@ VALIDATOR_URL="${VALIDATOR_URL:-http://localhost:8090}"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../../.." && pwd)"
 DEFAULT_BINARY_FILE="${REPO_ROOT}/fixtures/binaries/do-it-live.jpeg"
 BINARY_FILE="${1:-$DEFAULT_BINARY_FILE}"
-TEST_WALLET="${TEST_WALLET:-0x03c6fced478cbbc9a4fab34ef9f40767739d1ff7}"
+TEST_WALLET="${TEST_WALLET:-}"
+DEFAULT_TEST_WALLET="0x03c6fced478cbbc9a4fab34ef9f40767739d1ff7"
 WRITE_WAIT_SECONDS="${WRITE_WAIT_SECONDS:-90}"
 AUTO_START_IPFS="${AUTO_START_IPFS:-true}"
 IPFS_API_HTTP="${IPFS_API_HTTP:-http://127.0.0.1:5001}"
@@ -71,6 +72,22 @@ PY
 blob_id_without_size() {
     local blob_id="$1"
     printf '%s\n' "${blob_id%%#*}"
+}
+
+wallet_from_local_prefixes() {
+    local prefixes="$1"
+    python3 - "$prefixes" <<'PY'
+import re
+import sys
+
+value = sys.argv[1].strip()
+match = re.match(r'^([0-9a-fA-F]{2})(?:-([0-9a-fA-F]{2}))?$', value)
+if not match:
+    sys.exit(0)
+
+start = int(match.group(1), 16)
+print(f"0x{start:02x}{0:038x}")
+PY
 }
 
 # Check if IPFS is running
@@ -137,6 +154,14 @@ check_validator() {
     HEALTH_JSON=$(curl -s "$VALIDATOR_URL/health")
     BLOBSTORE_ACTIVE=$(echo "$HEALTH_JSON" | jq -r '.blobStoreActive // false' 2>/dev/null || echo "false")
     BLOBSTORE_TYPE=$(echo "$HEALTH_JSON" | jq -r '.blobStoreType // "unknown"' 2>/dev/null || echo "unknown")
+    LOCAL_PREFIXES=$(echo "$HEALTH_JSON" | jq -r '.sharding.localPrefixes // empty' 2>/dev/null || true)
+
+    if [ -z "$TEST_WALLET" ]; then
+        if [ -n "$LOCAL_PREFIXES" ] && [ "$LOCAL_PREFIXES" != "none" ]; then
+            TEST_WALLET="$(wallet_from_local_prefixes "$LOCAL_PREFIXES")"
+        fi
+        TEST_WALLET="${TEST_WALLET:-$DEFAULT_TEST_WALLET}"
+    fi
 
     if [ "$BLOBSTORE_ACTIVE" = "true" ]; then
         echo -e "${GREEN}✅ BlobStore active (${BLOBSTORE_TYPE})${NC}"
@@ -144,6 +169,8 @@ check_validator() {
         echo -e "${YELLOW}⚠️  BlobStore not reported active${NC}"
         echo -e "${YELLOW}   Set: export BLOBSTORE_TYPE=ipfs${NC}"
     fi
+
+    echo -e "${CYAN}   Test Wallet: ${TEST_WALLET}${NC}"
 }
 
 # Check binary file

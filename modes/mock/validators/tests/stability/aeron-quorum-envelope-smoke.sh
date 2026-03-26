@@ -6,7 +6,8 @@ TESTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$TESTS_DIR/lib/_cluster_test_lib.sh"
 
 QUORUM_STOP_MODE="${QUORUM_STOP_MODE:-crash}"
-QUORUM_ENVELOPE_WALLET="${QUORUM_ENVELOPE_WALLET:-0x5555555555555555555555555555555555555555}"
+QUORUM_ENVELOPE_WALLET="${QUORUM_ENVELOPE_WALLET:-}"
+DEFAULT_QUORUM_ENVELOPE_WALLET="0x5555555555555555555555555555555555555555"
 QUORUM_SETTLE_SECONDS="${QUORUM_SETTLE_SECONDS:-5}"
 STOPPED_NODES=()
 
@@ -34,6 +35,8 @@ restore_cluster() {
   log "QUORUM_ENVELOPE recovery leader=${recovered_leader}"
 }
 trap 'restore_cluster || true' EXIT
+
+QUORUM_ENVELOPE_WALLET="${QUORUM_ENVELOPE_WALLET:-$(resolve_wallet_for_local_shard "$DEFAULT_QUORUM_ENVELOPE_WALLET" 5)}"
 
 record_stopped_node() {
   local node=$1
@@ -82,7 +85,7 @@ leader_node=$(port_to_node "$leader_port")
 tolerated_losses=$(((OAK_CLUSTER_SIZE - 1) / 2))
 loss_threshold=$((tolerated_losses + 1))
 
-log "QUORUM_ENVELOPE baseline leader=${leader_port} cluster-size=${OAK_CLUSTER_SIZE} tolerated-losses=${tolerated_losses}"
+log "QUORUM_ENVELOPE baseline leader=${leader_port} cluster-size=${OAK_CLUSTER_SIZE} tolerated-losses=${tolerated_losses} wallet=${QUORUM_ENVELOPE_WALLET}"
 
 FOLLOWER_NODES=()
 for node in $(seq 0 $((OAK_CLUSTER_SIZE - 1))); do

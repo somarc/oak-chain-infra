@@ -7,7 +7,8 @@ source "$TESTS_DIR/lib/_cluster_test_lib.sh"
 
 CATCHUP_WRITE_COUNT="${CATCHUP_WRITE_COUNT:-8}"
 CATCHUP_STOP_MODE="${CATCHUP_STOP_MODE:-crash}"
-CATCHUP_WALLET="${CATCHUP_WALLET:-0x4444444444444444444444444444444444444444}"
+CATCHUP_WALLET="${CATCHUP_WALLET:-}"
+DEFAULT_CATCHUP_WALLET="0x4444444444444444444444444444444444444444"
 STOPPED_NODE=""
 
 restore_cluster() {
@@ -18,6 +19,8 @@ restore_cluster() {
   wait_all_nodes_up 90 || true
 }
 trap restore_cluster EXIT
+
+CATCHUP_WALLET="${CATCHUP_WALLET:-$(resolve_wallet_for_local_shard "$DEFAULT_CATCHUP_WALLET" 4)}"
 
 leader_port=$(find_leader_port || true)
 if [ -z "$leader_port" ]; then
@@ -42,7 +45,7 @@ if [ -z "$follower_node" ]; then
   exit 1
 fi
 
-log "CATCHUP_TEST leader=${leader_port} follower=$(node_port "$follower_node") writes=${CATCHUP_WRITE_COUNT}"
+log "CATCHUP_TEST leader=${leader_port} follower=$(node_port "$follower_node") writes=${CATCHUP_WRITE_COUNT} wallet=${CATCHUP_WALLET}"
 
 stop_node "$follower_node" "$CATCHUP_STOP_MODE"
 STOPPED_NODE="$follower_node"
