@@ -35,17 +35,17 @@ echo "cluster:${CLUSTER_NAME} runtime-root=${CLUSTER_RUNTIME_ROOT}"
 for port in "${PORTS[@]}"; do
   url="$HOST:$port/health/local"
   body_file="/tmp/oak-health-$port.json"
-  code=$(curl -s -o "$body_file" -w "%{http_code}" "$url" || echo "000")
+  code=$(curl -s --max-time 3 -o "$body_file" -w "%{http_code}" "$url" || echo "000")
   if [ "$code" = "000" ] && [ "$HOST" = "http://localhost" ]; then
     # Fallback for environments where localhost resolution/path differs from loopback literal.
-    code=$(curl -s -o "$body_file" -w "%{http_code}" "http://127.0.0.1:$port/health/local" || echo "000")
+    code=$(curl -s --max-time 3 -o "$body_file" -w "%{http_code}" "http://127.0.0.1:$port/health/local" || echo "000")
   fi
   if [ "$code" != "200" ]; then
     echo "validator:$port status=DOWN http=$code"
     continue
   fi
   cluster_body_file="/tmp/oak-cluster-health-$port.json"
-  cluster_code=$(curl -s -o "$cluster_body_file" -w "%{http_code}" "$HOST:$port/health" || echo "000")
+  cluster_code=$(curl -s --max-time 3 -o "$cluster_body_file" -w "%{http_code}" "$HOST:$port/health" || echo "000")
   role=$(python3 - "$cluster_body_file" <<'PY'
 import json
 import pathlib
@@ -100,7 +100,7 @@ else
   fi
 fi
 
-ops_code=$(curl -s -o /tmp/oak-ops-proxy.json -w "%{http_code}" "$OPS_PROXY_URL/ops/v1/overview" || echo "000")
+ops_code=$(curl -s --max-time 3 -o /tmp/oak-ops-proxy.json -w "%{http_code}" "$OPS_PROXY_URL/ops/v1/overview" || echo "000")
 if [ "$ops_code" = "200" ]; then
   echo "ops-proxy:UP url=$OPS_PROXY_URL"
 else

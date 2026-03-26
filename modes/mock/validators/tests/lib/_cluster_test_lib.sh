@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TESTS_DIR="$(cd "$LIB_DIR/.." && pwd)"
 VALIDATOR_SCRIPT="${VALIDATOR_SCRIPT:-$TESTS_DIR/../debug/run-validator-node.sh}"
 CLUSTER_RUNTIME_ROOT="${CLUSTER_RUNTIME_ROOT:-$HOME/oak-chain}"
 PID_DIR="${PID_DIR:-$CLUSTER_RUNTIME_ROOT/pids}"
