@@ -35,12 +35,37 @@ WRITE_WAIT_SECONDS="${WRITE_WAIT_SECONDS:-90}"
 AUTO_START_IPFS="${AUTO_START_IPFS:-true}"
 IPFS_API_HTTP="${IPFS_API_HTTP:-http://127.0.0.1:5001}"
 IPFS_READY_TIMEOUT_SECONDS="${IPFS_READY_TIMEOUT_SECONDS:-30}"
+IPFS_FILES_ROOT="${IPFS_FILES_ROOT:-/oak/ipfs}"
 OPERATION_ID=""
+PROPOSAL_ID=""
 STORAGE_PATH=""
+STORED_BLOB_ID=""
 
 ipfs_api_ready() {
     local base="$1"
     curl -s -X POST "${base}/api/v0/version" > /dev/null 2>&1
+}
+
+random_hex() {
+    local bytes="$1"
+    if command -v openssl > /dev/null 2>&1; then
+        openssl rand -hex "$bytes" 2>/dev/null
+        return
+    fi
+    python3 - <<PY
+import secrets
+print(secrets.token_hex(${bytes}))
+PY
+}
+
+base64url_no_padding() {
+    python3 - "$1" <<'PY'
+import base64
+import sys
+
+value = sys.argv[1].encode("utf-8")
+print(base64.urlsafe_b64encode(value).decode("ascii").rstrip("="))
+PY
 }
 
 # Check if IPFS is running
@@ -163,48 +188,44 @@ upload_to_ipfs() {
     ipfs pin rm "$EXPECTED_CID" > /dev/null 2>&1 || true
 }
 
-# Convert binary to base64 for JSON
-binary_to_base64() {
-    base64 < "$BINARY_FILE"
-}
-
 # Create write proposal with binary
 submit_proposal() {
     echo ""
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${CYAN}✍️  Submitting Write Proposal with Binary${NC}"
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    
-    echo -e "${YELLOW}   Encoding binary to base64...${NC}"
-    BINARY_BASE64=$(binary_to_base64)
-    
+
     echo -e "${YELLOW}   Creating proposal...${NC}"
-    
-    TX_HASH="0x$(openssl rand -hex 32 2>/dev/null || date +%s%N)"
-    SIGNATURE="0x$(openssl rand -hex 65 2>/dev/null || printf '%0130d' 0)"
+
+    PROPOSAL_ID="0x$(random_hex 32)"
+    TX_HASH="0x$(random_hex 32)"
+    SIGNATURE="0x$(random_hex 65)"
     MIME_TYPE=$(file -b --mime-type "$BINARY_FILE")
-    
-    echo -e "${YELLOW}   Submitting to validator (form-encoded)...${NC}"
-    
-    # Use form-encoded data (matching 30min-economics-test.sh pattern)
+
+    echo -e "${YELLOW}   Submitting to validator (multipart form data)...${NC}"
+
     RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$VALIDATOR_URL/v1/propose-write" \
-        -H "Content-Type: application/x-www-form-urlencoded" \
-        -d "walletAddress=$TEST_WALLET" \
-        -d "ethereumTxHash=$TX_HASH" \
-        -d "contentType=file" \
-        -d "message=[IPFS TEST] Binary upload: $(basename "$BINARY_FILE") ($MIME_TYPE)" \
-        -d "binaryData=$BINARY_BASE64" \
-        -d "mimeType=$MIME_TYPE" \
-        -d "signature=$SIGNATURE" \
-        -d "paymentTier=standard")
+        -H "Expect:" \
+        -F "walletAddress=$TEST_WALLET" \
+        -F "proposalId=$PROPOSAL_ID" \
+        -F "ethereumTxHash=$TX_HASH" \
+        -F "contentType=file" \
+        -F "message=[IPFS TEST] Binary upload: $(basename "$BINARY_FILE") ($MIME_TYPE)" \
+        -F "signature=$SIGNATURE" \
+        -F "paymentTier=standard" \
+        -F "file=@${BINARY_FILE};type=${MIME_TYPE}")
     
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
     RESPONSE_BODY=$(echo "$RESPONSE" | sed '$d')
     
     if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "202" ]; then
         OPERATION_ID=$(echo "$RESPONSE_BODY" | jq -r '.operationId // .proposalId // empty' 2>/dev/null || true)
+        if [ -z "$OPERATION_ID" ]; then
+            OPERATION_ID="$PROPOSAL_ID"
+        fi
         STORAGE_PATH=$(echo "$RESPONSE_BODY" | jq -r '.storagePath // empty' 2>/dev/null || true)
         echo -e "${GREEN}✅ Proposal submitted (HTTP $HTTP_CODE)${NC}"
+        echo -e "${CYAN}   Proposal ID: $PROPOSAL_ID${NC}"
         echo -e "${CYAN}   TX Hash: $TX_HASH${NC}"
         echo -e "${CYAN}   Wallet: $TEST_WALLET${NC}"
         echo -e "${CYAN}   Binary: $(basename "$BINARY_FILE") (${FILE_SIZE_KB} KB)${NC}"
@@ -333,11 +354,11 @@ check_oak_node() {
     fi
 }
 
-# Check IPFS pinned CIDs
-check_ipfs_pins() {
+# Check IPFS retention (direct pin or Oak-managed MFS reference)
+check_ipfs_retention() {
     echo ""
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${CYAN}📌 Checking IPFS Pins${NC}"
+    echo -e "${CYAN}📌 Checking IPFS Retention${NC}"
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     
     echo -e "${YELLOW}   Querying IPFS pins...${NC}"
@@ -359,11 +380,25 @@ check_ipfs_pins() {
         if [ -n "$PIN_STATUS" ]; then
             PIN_TYPE=$(echo "$PIN_STATUS" | awk '{print $2}' | head -n1)
             echo -e "${GREEN}✅ Expected CID pin state: ${PIN_TYPE:-unknown} (${EXPECTED_CID})${NC}"
-        else
-            echo -e "${RED}❌ Expected CID is not pinned: $EXPECTED_CID${NC}"
-            exit 1
+            return
         fi
     fi
+
+    if [ -n "$STORED_BLOB_ID" ]; then
+        ENCODED_BLOB_ID=$(base64url_no_padding "$STORED_BLOB_ID")
+        MFS_CONTENT_PATH="${IPFS_FILES_ROOT}/content/${ENCODED_BLOB_ID}"
+        if ipfs files stat "$MFS_CONTENT_PATH" > /dev/null 2>&1; then
+            echo -e "${GREEN}✅ CID retained via Oak-managed MFS content reference${NC}"
+            echo -e "${CYAN}   MFS Path: $MFS_CONTENT_PATH${NC}"
+            return
+        fi
+    fi
+
+    echo -e "${RED}❌ Expected CID is neither directly pinned nor retained via Oak MFS reference${NC}"
+    if [ -n "$STORED_BLOB_ID" ]; then
+        echo -e "${YELLOW}   Checked blob reference: ${STORED_BLOB_ID}${NC}"
+    fi
+    exit 1
 }
 
 # Retrieve binary from IPFS
@@ -435,7 +470,7 @@ main() {
     submit_proposal
     wait_for_write
     check_oak_node
-    check_ipfs_pins
+    check_ipfs_retention
     retrieve_from_ipfs
     show_ipfs_stats
     
@@ -446,6 +481,7 @@ main() {
     echo ""
     echo -e "${CYAN}📝 Summary:${NC}"
     echo -e "${CYAN}   Binary File: $BINARY_FILE${NC}"
+    echo -e "${CYAN}   Proposal ID: $PROPOSAL_ID${NC}"
     echo -e "${CYAN}   Operation ID: $OPERATION_ID${NC}"
     echo -e "${CYAN}   Oak Node Path: $STORAGE_PATH${NC}"
     echo -e "${CYAN}   Expected CID: $EXPECTED_CID${NC}"
