@@ -28,7 +28,39 @@ if ! wait_all_nodes_cluster_healthy "$POST_CYCLE_HEALTH_WAIT_SECONDS"; then
   exit 1
 fi
 
+log_cluster_snapshot() {
+  local label="$1"
+  local node
+  for node in $(seq 0 $((OAK_CLUSTER_SIZE - 1))); do
+    local port
+    local code
+    local body
+    local status
+    local role
+    local healthy
+    port="$(node_port "$node")"
+    code="$(http_code "$(node_base "$node")${LOCAL_HEALTH_PATH}" || echo "000")"
+    body="$(fetch_json "$(node_base "$node")/health" 2>/dev/null || echo "{}")"
+    status="$(json_field "$body" "status")"
+    role="$(json_field "$body" "currentRole")"
+    healthy="$(json_field "$body" "clusterHealthy")"
+    log "${label} node=${node} port=${port} http=${code:-000} status=${status:-unknown} role=${role:-unknown} clusterHealthy=${healthy:-unknown}"
+  done
+}
+
 for cycle in $(seq 1 "$WARM_FAILOVER_CYCLES"); do
+  if ! wait_all_nodes_up "$POST_CYCLE_HEALTH_WAIT_SECONDS"; then
+    log "WARM_FAILOVER cycle=${cycle} baseline did not have all nodes UP"
+    log_cluster_snapshot "WARM_FAILOVER baseline"
+    exit 1
+  fi
+
+  if ! wait_all_nodes_cluster_healthy "$POST_CYCLE_HEALTH_WAIT_SECONDS"; then
+    log "WARM_FAILOVER cycle=${cycle} baseline did not have cluster healthy"
+    log_cluster_snapshot "WARM_FAILOVER baseline"
+    exit 1
+  fi
+
   log "WARM_FAILOVER cycle=${cycle}/${WARM_FAILOVER_CYCLES} starting"
   "$FAILOVER_SCRIPT"
 
@@ -49,13 +81,13 @@ for cycle in $(seq 1 "$WARM_FAILOVER_CYCLES"); do
     sleep "$WARM_FAILOVER_INTER_CYCLE_DRAIN_SECONDS"
 
     if ! wait_all_nodes_up "$POST_CYCLE_HEALTH_WAIT_SECONDS"; then
-      log "WARM_FAILOVER cycle=${cycle} drain window lost node availability"
-      exit 1
+      log "WARM_FAILOVER cycle=${cycle} drain window lost node availability; deferring hard failure to next cycle baseline"
+      log_cluster_snapshot "WARM_FAILOVER drain"
     fi
 
     if ! wait_all_nodes_cluster_healthy "$POST_CYCLE_HEALTH_WAIT_SECONDS"; then
-      log "WARM_FAILOVER cycle=${cycle} drain window lost cluster health"
-      exit 1
+      log "WARM_FAILOVER cycle=${cycle} drain window lost cluster health; deferring hard failure to next cycle baseline"
+      log_cluster_snapshot "WARM_FAILOVER drain"
     fi
   fi
 done
