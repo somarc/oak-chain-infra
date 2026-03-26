@@ -46,6 +46,13 @@ Validator-only local operations for Oak Chain mock mode.
   - Writes a timestamped report to:
     - `~/oak-chain/logs/validator-triage-<timestamp>.txt`
   - Useful right after load tests or cluster incidents.
+- `monitoring/mock-scale-staircase-monitor.sh`
+  - Polls a running mock staircase log, prints progress snapshots, and captures an investigation bundle when the run stalls or fails.
+  - Default targets:
+    - run log: `/tmp/oak-mock-scale-staircase-overnight.log`
+    - artifact root: `/tmp/oak-mock-scale-staircase-artifacts`
+  - Investigation output:
+    - `/tmp/oak-mock-scale-staircase-artifacts/monitoring/mock-scale-staircase-investigation-<timestamp>/`
 
 ## Config
 
@@ -59,6 +66,7 @@ Validator-only local operations for Oak Chain mock mode.
 
 - `tests/validator-api-smoke.sh`
 - `tests/sharding-3x2-smoke.sh`
+- `tests/mock-scale-staircase-monitor.sh`
 
 ## Troubleshooting
 
@@ -93,3 +101,8 @@ Validator-only local operations for Oak Chain mock mode.
 - `AERON_DIR_BASE` (default: `$CLUSTER_RUNTIME_ROOT/validator-N/aeron-media`)
 - `AERON_GLOBAL_TMP_CLEANUP` (default: `false`; keep it false for `3x2`)
 - `EXTRA_JAVA_OPTS` (used by 3x2 configs to turn on sharding JVM flags)
+- `MONITOR_INTERVAL_SECONDS` (default: `30` for `mock-scale-staircase-monitor.sh`)
+- `MONITOR_TIMEOUT_SECONDS` (default: `0` for `mock-scale-staircase-monitor.sh`, disabled)
+- `STALL_SECONDS` (default: `900` for `mock-scale-staircase-monitor.sh`)
+- `CONFIRMATION_ATTEMPTS` (default: `3` for `mock-scale-staircase-monitor.sh`)
+- `CONFIRMATION_SLEEP_SECONDS` (default: `5` for `mock-scale-staircase-monitor.sh`)

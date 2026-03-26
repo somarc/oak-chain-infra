@@ -24,6 +24,8 @@ work should prefer the categorized paths below.
   - Cross-system integrations such as binary/IPFS persistence.
 - `manual/`
   - Broad endpoint enumeration and ad hoc diagnostics.
+- `monitoring/`
+  - Periodic staircase watcher and failure-investigation capture.
 
 ## Recommended Gates
 
@@ -46,6 +48,9 @@ work should prefer the categorized paths below.
 - `smoke/validator-api-smoke.sh`
   - Cheap control-plane baseline for health, consensus, Aeron, and queue
     endpoints across nodes.
+- `monitoring/mock-scale-staircase-monitor.sh`
+  - Watches a live staircase run log, emits progress snapshots, and captures
+    an investigation bundle when the run stalls or fails.
 
 ## Extended Or Targeted Checks
 
@@ -123,9 +128,35 @@ AUTO_START_IPFS=false \
 bash oak-chain-infra/modes/mock/validators/tests/suites/mock-scale-staircase.sh
 ```
 
+Run the staircase monitor in a second terminal:
+
+```bash
+cd /Users/mhess/aem/aem-code/OAK
+bash oak-chain-infra/modes/mock/validators/tests/mock-scale-staircase-monitor.sh \
+  --run-log /tmp/oak-mock-scale-staircase-overnight.log \
+  --artifact-root /tmp/oak-mock-scale-staircase-artifacts
+```
+
+Monitor defaults:
+
+- run log: `/tmp/oak-mock-scale-staircase-overnight.log`
+- artifact root: `/tmp/oak-mock-scale-staircase-artifacts`
+- poll interval: `30s`
+- monitor timeout: `0s` (disabled)
+- stall threshold: `900s`
+- terminal-state confirmation: `3` retries with `5s` sleeps
+
+If the monitor declares a stall or failure, it writes an investigation bundle
+under:
+
+- `/tmp/oak-mock-scale-staircase-artifacts/monitoring/mock-scale-staircase-investigation-<timestamp>/`
+
 If you customize topology config packs, keep Aeron base-port blocks disjoint
 across clusters. A 5-node cluster started at `9000` consumes `9000-9405`, so
 the next cluster must not reuse `9400`.
+
+To add a hard monitor timeout, pass `--timeout-seconds <n>` or set
+`MONITOR_TIMEOUT_SECONDS=<n>`. A value of `0` keeps the monitor open-ended.
 
 Run the longer staircase plus soak variant:
 
@@ -171,3 +202,4 @@ Artifacts:
 - `mock-scale-staircase.sh` defaults to `/tmp/oak-mock-scale-staircase-artifacts`
 - `proposal-surfaces-single-cluster.sh` defaults to `/tmp/oak-proposal-surfaces-single-cluster-artifacts`
 - `proposal-surfaces-3x2.sh` defaults to `/tmp/oak-proposal-surfaces-3x2-artifacts`
+- `mock-scale-staircase-monitor.sh` defaults to `/tmp/oak-mock-scale-staircase-artifacts/monitoring/mock-scale-staircase-investigation-<timestamp>`
