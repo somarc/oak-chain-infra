@@ -2,4 +2,4 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec "$SCRIPT_DIR/../monitoring/mock-scale-staircase-monitor.sh" "$@"
+exec bash "$SCRIPT_DIR/../monitoring/mock-scale-staircase-monitor.sh" "$@"
