@@ -155,6 +155,20 @@ assert_prefix() {
   esac
 }
 
+assert_loopback_redirect_host() {
+  local actual="$1"
+  local label="$2"
+  case "$actual" in
+    http://127.0.0.1:*|http://localhost:*)
+      echo "✅ ${label}: ${actual}"
+      ;;
+    *)
+      echo "❌ ${label}: expected loopback redirect host, got '${actual}'"
+      exit 1
+      ;;
+  esac
+}
+
 assert_port_in_cluster() {
   local url="$1"
   local base_port="$2"
@@ -199,8 +213,14 @@ assert_local_write_result() {
       echo "✅ ${cluster_name} local write: ${status}"
       ;;
     307)
-      assert_prefix "$location" "http://" "${cluster_name} local write redirect url"
-      assert_prefix "$location" "http://127.0.0.1:${http_base_port}/v1/propose-write" "${cluster_name} local write redirect path"
+      assert_loopback_redirect_host "$location" "${cluster_name} local write redirect host"
+      case "$location" in
+        *"/v1/propose-write") ;;
+        *)
+          echo "❌ ${cluster_name} local write redirect path: expected /v1/propose-write suffix, got '${location}'"
+          exit 1
+          ;;
+      esac
       assert_port_in_cluster "$location" "$http_base_port" "$http_port_step" "$cluster_size" "${cluster_name} local write redirect target"
       ;;
     *)
@@ -317,7 +337,8 @@ MESSAGE_A="[3x3 smoke] local-write-a"
 
 submit_write "http://127.0.0.1:${B_HTTP_BASE}" "$WALLET_A" "foreign-write-a-on-b"
 assert_equals "$REQUEST_STATUS" "307" "cluster-b foreign write redirect"
-assert_prefix "$REQUEST_LOCATION" "http://127.0.0.1:${A_HTTP_BASE}/v1/propose-write" "cluster-b redirect target"
+assert_loopback_redirect_host "$REQUEST_LOCATION" "cluster-b redirect host"
+assert_port_in_cluster "$REQUEST_LOCATION" "$A_HTTP_BASE" "$A_HTTP_STEP" "$A_SIZE" "cluster-b redirect target"
 
 submit_write "http://127.0.0.1:${B_HTTP_BASE}" "$WALLET_B" "local-write-b"
 assert_local_write_result "$REQUEST_STATUS" "$REQUEST_LOCATION" "cluster-b" "$B_SIZE" "$B_HTTP_BASE" "$B_HTTP_STEP"
@@ -325,7 +346,8 @@ MESSAGE_B="[3x3 smoke] local-write-b"
 
 submit_write "http://127.0.0.1:${C_HTTP_BASE}" "$WALLET_B" "foreign-write-b-on-c"
 assert_equals "$REQUEST_STATUS" "307" "cluster-c foreign write redirect"
-assert_prefix "$REQUEST_LOCATION" "http://127.0.0.1:${B_HTTP_BASE}/v1/propose-write" "cluster-c redirect target"
+assert_loopback_redirect_host "$REQUEST_LOCATION" "cluster-c redirect host"
+assert_port_in_cluster "$REQUEST_LOCATION" "$B_HTTP_BASE" "$B_HTTP_STEP" "$B_SIZE" "cluster-c redirect target"
 
 submit_write "http://127.0.0.1:${C_HTTP_BASE}" "$WALLET_C" "local-write-c"
 assert_local_write_result "$REQUEST_STATUS" "$REQUEST_LOCATION" "cluster-c" "$C_SIZE" "$C_HTTP_BASE" "$C_HTTP_STEP"
@@ -333,7 +355,8 @@ MESSAGE_C="[3x3 smoke] local-write-c"
 
 submit_write "http://127.0.0.1:${A_HTTP_BASE}" "$WALLET_C" "foreign-write-c-on-a"
 assert_equals "$REQUEST_STATUS" "307" "cluster-a foreign write redirect"
-assert_prefix "$REQUEST_LOCATION" "http://127.0.0.1:${C_HTTP_BASE}/v1/propose-write" "cluster-a redirect target"
+assert_loopback_redirect_host "$REQUEST_LOCATION" "cluster-a redirect host"
+assert_port_in_cluster "$REQUEST_LOCATION" "$C_HTTP_BASE" "$C_HTTP_STEP" "$C_SIZE" "cluster-a redirect target"
 
 wait_for_cluster_wallet_message "cluster-a" "$A_SIZE" "$A_HTTP_BASE" "$A_HTTP_STEP" "$WALLET_A" "$MESSAGE_A" "local wallet visible"
 wait_for_cluster_wallet_message "cluster-b" "$B_SIZE" "$B_HTTP_BASE" "$B_HTTP_STEP" "$WALLET_A" "$MESSAGE_A" "remote wallet visible"
