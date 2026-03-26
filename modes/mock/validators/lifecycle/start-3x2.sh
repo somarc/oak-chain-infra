@@ -41,6 +41,37 @@ load_cluster_env() {
   set +a
 }
 
+cluster_aeron_range() {
+  local cluster_config="$1"
+  (
+    load_cluster_env "$cluster_config"
+    local cluster_size="${OAK_CLUSTER_SIZE:-3}"
+    local start_port="${AERON_CLUSTER_BASE_PORT:-9000}"
+    local end_port=$((start_port + ((cluster_size - 1) * 100) + 5))
+    printf '%s|%s|%s|%s\n' \
+      "${OAK_CLUSTER_NAME:-unknown}" \
+      "$cluster_size" \
+      "$start_port" \
+      "$end_port"
+  )
+}
+
+validate_no_aeron_overlap() {
+  local a_name a_size a_start a_end
+  local b_name b_size b_start b_end
+
+  IFS='|' read -r a_name a_size a_start a_end < <(cluster_aeron_range "$CLUSTER_A_CONFIG")
+  IFS='|' read -r b_name b_size b_start b_end < <(cluster_aeron_range "$CLUSTER_B_CONFIG")
+
+  if [ "$a_start" -le "$b_end" ] && [ "$b_start" -le "$a_end" ]; then
+    echo "❌ Aeron port overlap detected between $a_name and $b_name"
+    echo "   $a_name size=$a_size range=${a_start}-${a_end}"
+    echo "   $b_name size=$b_size range=${b_start}-${b_end}"
+    echo "   Adjust AERON_CLUSTER_BASE_PORT values before starting a multi-cluster topology."
+    exit 1
+  fi
+}
+
 start_named_cluster() {
   local label="$1"
   local cluster_config="$2"
@@ -91,6 +122,8 @@ done
 if [ "$WITH_MONITORS" = "false" ]; then
   FORWARD_ARGS+=(--no-watchdog --no-load-observer)
 fi
+
+validate_no_aeron_overlap
 
 if [ "$BUILD_ONCE" = "true" ]; then
   start_named_cluster "cluster-a" "$CLUSTER_A_CONFIG" --build

@@ -42,6 +42,54 @@ load_cluster_env() {
   set +a
 }
 
+cluster_aeron_range() {
+  local cluster_config="$1"
+  (
+    load_cluster_env "$cluster_config"
+    local cluster_size="${OAK_CLUSTER_SIZE:-3}"
+    local start_port="${AERON_CLUSTER_BASE_PORT:-9000}"
+    local end_port=$((start_port + ((cluster_size - 1) * 100) + 5))
+    printf '%s|%s|%s|%s\n' \
+      "${OAK_CLUSTER_NAME:-unknown}" \
+      "$cluster_size" \
+      "$start_port" \
+      "$end_port"
+  )
+}
+
+assert_distinct_aeron_ranges() {
+  local left_name="$1"
+  local left_size="$2"
+  local left_start="$3"
+  local left_end="$4"
+  local right_name="$5"
+  local right_size="$6"
+  local right_start="$7"
+  local right_end="$8"
+
+  if [ "$left_start" -le "$right_end" ] && [ "$right_start" -le "$left_end" ]; then
+    echo "❌ Aeron port overlap detected between $left_name and $right_name"
+    echo "   $left_name size=$left_size range=${left_start}-${left_end}"
+    echo "   $right_name size=$right_size range=${right_start}-${right_end}"
+    echo "   Adjust AERON_CLUSTER_BASE_PORT values before starting a multi-cluster topology."
+    exit 1
+  fi
+}
+
+validate_no_aeron_overlap() {
+  local a_name a_size a_start a_end
+  local b_name b_size b_start b_end
+  local c_name c_size c_start c_end
+
+  IFS='|' read -r a_name a_size a_start a_end < <(cluster_aeron_range "$CLUSTER_A_CONFIG")
+  IFS='|' read -r b_name b_size b_start b_end < <(cluster_aeron_range "$CLUSTER_B_CONFIG")
+  IFS='|' read -r c_name c_size c_start c_end < <(cluster_aeron_range "$CLUSTER_C_CONFIG")
+
+  assert_distinct_aeron_ranges "$a_name" "$a_size" "$a_start" "$a_end" "$b_name" "$b_size" "$b_start" "$b_end"
+  assert_distinct_aeron_ranges "$a_name" "$a_size" "$a_start" "$a_end" "$c_name" "$c_size" "$c_start" "$c_end"
+  assert_distinct_aeron_ranges "$b_name" "$b_size" "$b_start" "$b_end" "$c_name" "$c_size" "$c_start" "$c_end"
+}
+
 start_named_cluster() {
   local label="$1"
   local cluster_config="$2"
@@ -96,6 +144,8 @@ done
 if [ "$WITH_MONITORS" = "false" ]; then
   FORWARD_ARGS+=(--no-watchdog --no-load-observer)
 fi
+
+validate_no_aeron_overlap
 
 if [ "$BUILD_ONCE" = "true" ]; then
   start_named_cluster "cluster-a" "$CLUSTER_A_CONFIG" --build

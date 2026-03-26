@@ -123,6 +123,10 @@ AUTO_START_IPFS=false \
 bash oak-chain-infra/modes/mock/validators/tests/suites/mock-scale-staircase.sh
 ```
 
+If you customize topology config packs, keep Aeron base-port blocks disjoint
+across clusters. A 5-node cluster started at `9000` consumes `9000-9405`, so
+the next cluster must not reuse `9400`.
+
 Run the longer staircase plus soak variant:
 
 ```bash
