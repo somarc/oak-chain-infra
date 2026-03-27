@@ -265,8 +265,28 @@ test('mock up dry-run resolves the underlying single-cluster lifecycle script an
   assert.deepEqual(payload.argv, ['--fresh', '--build']);
 });
 
+test('lab 3x2 up dry-run resolves the topology lifecycle script and passthrough args', async () => {
+  const result = await runCli(['lab', '3x2', 'up', '--dry-run', '--', '--fresh']);
+  assert.equal(result.code, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.match(payload.script, /modes\/mock\/validators\/lifecycle\/start-3x2\.sh$/);
+  assert.deepEqual(payload.argv, ['--fresh']);
+});
+
+test('mock verify surfaces-3x2 is redirected to the lab namespace', async () => {
+  const result = await runCli(['mock', 'verify', 'surfaces-3x2', '--dry-run']);
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /moved under lab/i);
+});
+
 test('legacy local command path is rejected in favor of the mock namespace', async () => {
   const result = await runCli(['local', 'up', '--dry-run']);
   assert.equal(result.code, 1);
   assert.match(result.stderr, /moved under mock/);
+});
+
+test('legacy incident command path is rejected in favor of the lab namespace', async () => {
+  const result = await runCli(['incident', 'triage', '--dry-run']);
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /moved under lab/);
 });

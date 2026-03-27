@@ -41,22 +41,6 @@ const READ_COMMANDS = {
 };
 
 const MOCK_SCRIPT_CANDIDATES = {
-  '3x2': {
-    down: [
-      'modes/mock/validators/lifecycle/stop-3x2.sh',
-    ],
-    status: [
-      'modes/mock/validators/lifecycle/status-3x2.sh',
-    ],
-    up: [
-      'modes/mock/validators/lifecycle/start-3x2.sh',
-    ],
-  },
-  incident: {
-    triage: [
-      'modes/mock/validators/monitoring/triage-validator-logs.sh',
-    ],
-  },
   lifecycle: {
     down: [
       'modes/mock/validators/lifecycle/stop-cluster.sh',
@@ -77,6 +61,31 @@ const MOCK_SCRIPT_CANDIDATES = {
       'modes/mock/validators/tests/smoke/validator-api-smoke.sh',
       'modes/mock/validators/tests/validator-api-smoke.sh',
     ],
+    'surfaces-single': [
+      'modes/mock/validators/tests/surfaces/proposal-surfaces-single-cluster.sh',
+      'modes/mock/validators/tests/proposal-surfaces-single-cluster.sh',
+    ],
+  },
+};
+
+const LAB_SCRIPT_CANDIDATES = {
+  '3x2': {
+    down: [
+      'modes/mock/validators/lifecycle/stop-3x2.sh',
+    ],
+    status: [
+      'modes/mock/validators/lifecycle/status-3x2.sh',
+    ],
+    up: [
+      'modes/mock/validators/lifecycle/start-3x2.sh',
+    ],
+  },
+  incident: {
+    triage: [
+      'modes/mock/validators/monitoring/triage-validator-logs.sh',
+    ],
+  },
+  verify: {
     staircase: [
       'modes/mock/validators/tests/suites/mock-scale-staircase.sh',
       'modes/mock/validators/tests/mock-scale-staircase.sh',
@@ -84,10 +93,6 @@ const MOCK_SCRIPT_CANDIDATES = {
     'surfaces-3x2': [
       'modes/mock/validators/tests/surfaces/proposal-surfaces-3x2.sh',
       'modes/mock/validators/tests/proposal-surfaces-3x2.sh',
-    ],
-    'surfaces-single': [
-      'modes/mock/validators/tests/surfaces/proposal-surfaces-single-cluster.sh',
-      'modes/mock/validators/tests/proposal-surfaces-single-cluster.sh',
     ],
   },
 };
@@ -740,26 +745,55 @@ async function runMockCommand(action, third, passthrough, dryRun) {
   if (action === 'up' || action === 'down' || action === 'status') {
     candidates = MOCK_SCRIPT_CANDIDATES.lifecycle[action];
     usage = 'Usage: oak-chain mock up|down|status [--dry-run] [-- <script args...>]';
-  } else if (action === '3x2') {
-    if (!third || !MOCK_SCRIPT_CANDIDATES['3x2'][third]) {
-      throw new Error('Usage: oak-chain mock 3x2 up|down|status [--dry-run] [-- <script args...>]');
-    }
-    candidates = MOCK_SCRIPT_CANDIDATES['3x2'][third];
-    usage = 'Usage: oak-chain mock 3x2 up|down|status [--dry-run] [-- <script args...>]';
   } else if (action === 'verify') {
+    if (third === 'surfaces-3x2' || third === 'staircase') {
+      throw new Error('Topology verify flows moved under lab. Use oak-chain lab verify surfaces-3x2|staircase.');
+    }
     if (!third || !MOCK_SCRIPT_CANDIDATES.verify[third]) {
-      throw new Error('Usage: oak-chain mock verify smoke|binary|surfaces-single|surfaces-3x2|staircase [--dry-run] [-- <script args...>]');
+      throw new Error('Usage: oak-chain mock verify smoke|binary|surfaces-single [--dry-run] [-- <script args...>]');
     }
     candidates = MOCK_SCRIPT_CANDIDATES.verify[third];
-    usage = 'Usage: oak-chain mock verify smoke|binary|surfaces-single|surfaces-3x2|staircase [--dry-run] [-- <script args...>]';
+    usage = 'Usage: oak-chain mock verify smoke|binary|surfaces-single [--dry-run] [-- <script args...>]';
+  } else if (action === '3x2') {
+    throw new Error('3x2 topology commands moved under lab. Use oak-chain lab 3x2 up|down|status.');
   } else if (action === 'incident') {
-    if (!third || !MOCK_SCRIPT_CANDIDATES.incident[third]) {
-      throw new Error('Usage: oak-chain mock incident triage [--dry-run] [-- <script args...>]');
-    }
-    candidates = MOCK_SCRIPT_CANDIDATES.incident[third];
-    usage = 'Usage: oak-chain mock incident triage [--dry-run] [-- <script args...>]';
+    throw new Error('Incident triage moved under lab. Use oak-chain lab incident triage.');
   } else {
-    throw new Error('Usage: oak-chain mock up|down|status | oak-chain mock 3x2 up|down|status | oak-chain mock verify ... | oak-chain mock incident triage');
+    throw new Error('Usage: oak-chain mock up|down|status | oak-chain mock verify smoke|binary|surfaces-single');
+  }
+
+  if (!candidates || candidates.length === 0) {
+    throw new Error(usage);
+  }
+
+  const scriptPath = await locateScript(candidates);
+  await spawnScript(scriptPath, passthrough, dryRun);
+}
+
+async function runLabCommand(action, third, passthrough, dryRun) {
+  let candidates;
+  let usage;
+
+  if (action === '3x2') {
+    if (!third || !LAB_SCRIPT_CANDIDATES['3x2'][third]) {
+      throw new Error('Usage: oak-chain lab 3x2 up|down|status [--dry-run] [-- <script args...>]');
+    }
+    candidates = LAB_SCRIPT_CANDIDATES['3x2'][third];
+    usage = 'Usage: oak-chain lab 3x2 up|down|status [--dry-run] [-- <script args...>]';
+  } else if (action === 'verify') {
+    if (!third || !LAB_SCRIPT_CANDIDATES.verify[third]) {
+      throw new Error('Usage: oak-chain lab verify surfaces-3x2|staircase [--dry-run] [-- <script args...>]');
+    }
+    candidates = LAB_SCRIPT_CANDIDATES.verify[third];
+    usage = 'Usage: oak-chain lab verify surfaces-3x2|staircase [--dry-run] [-- <script args...>]';
+  } else if (action === 'incident') {
+    if (!third || !LAB_SCRIPT_CANDIDATES.incident[third]) {
+      throw new Error('Usage: oak-chain lab incident triage [--dry-run] [-- <script args...>]');
+    }
+    candidates = LAB_SCRIPT_CANDIDATES.incident[third];
+    usage = 'Usage: oak-chain lab incident triage [--dry-run] [-- <script args...>]';
+  } else {
+    throw new Error('Usage: oak-chain lab 3x2 up|down|status | oak-chain lab verify surfaces-3x2|staircase | oak-chain lab incident triage');
   }
 
   if (!candidates || candidates.length === 0) {
@@ -773,7 +807,7 @@ async function runMockCommand(action, third, passthrough, dryRun) {
 function printHelp() {
   println('oak-chain v0');
   println('');
-  println('Single-cluster operator CLI for Oak Chain validators, with mock-only lifecycle and staircase helpers.');
+  println('Single-cluster operator CLI for Oak Chain validators, with mock-local single-cluster helpers and a separate lab namespace for topology tests.');
   println('');
   println('Usage:');
   println('  oak-chain cluster snapshot [--base-url URL] [--watch SEC]');
@@ -788,9 +822,10 @@ function printHelp() {
   println('  oak-chain api get <path> [--base-url URL]');
   println('  oak-chain doctor [--base-url URL] [--peer URL]');
   println('  oak-chain mock up|down|status [--dry-run] [-- <script args...>]');
-  println('  oak-chain mock 3x2 up|down|status [--dry-run] [-- <script args...>]');
-  println('  oak-chain mock verify smoke|binary|surfaces-single|surfaces-3x2|staircase [--dry-run] [-- <script args...>]');
-  println('  oak-chain mock incident triage [--dry-run] [-- <script args...>]');
+  println('  oak-chain mock verify smoke|binary|surfaces-single [--dry-run] [-- <script args...>]');
+  println('  oak-chain lab 3x2 up|down|status [--dry-run] [-- <script args...>]');
+  println('  oak-chain lab verify surfaces-3x2|staircase [--dry-run] [-- <script args...>]');
+  println('  oak-chain lab incident triage [--dry-run] [-- <script args...>]');
   println('');
   println('Global options:');
   println('  --base-url URL      Override the seed validator URL.');
@@ -811,10 +846,10 @@ function movedToMockMessage(group) {
     return 'local commands moved under mock. Use oak-chain mock up|down|status.';
   }
   if (group === 'verify') {
-    return 'verify commands moved under mock. Use oak-chain mock verify ....';
+    return 'verify commands are split: single-cluster flows use oak-chain mock verify ..., topology flows use oak-chain lab verify ....';
   }
   if (group === 'incident') {
-    return 'incident commands moved under mock. Use oak-chain mock incident triage.';
+    return 'incident commands moved under lab. Use oak-chain lab incident triage.';
   }
   return '';
 }
@@ -899,6 +934,11 @@ export async function main(argv = process.argv.slice(2)) {
 
   if (group === 'mock') {
     await runMockCommand(action, third, parsed.passthrough, dryRun);
+    return;
+  }
+
+  if (group === 'lab') {
+    await runLabCommand(action, third, parsed.passthrough, dryRun);
     return;
   }
 

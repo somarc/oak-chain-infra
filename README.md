@@ -10,7 +10,8 @@ It is intended for:
 
 - fast reads against a single seed validator and its discovered peers
 - single-cluster operator inspection for mock, sepolia, and mainnet environments
-- mock-only wrappers over the existing local lifecycle and validation scripts
+- single-cluster mock-local lifecycle and validation wrappers
+- a separate `lab` namespace for local topology and staircase testing
 - Codex and operator workflows that need deterministic JSON output
 
 Quick start:
@@ -27,6 +28,8 @@ oak-chain doctor
 
 oak-chain mock up -- --fresh --build
 oak-chain mock verify smoke
+oak-chain lab 3x2 up -- --fresh
+oak-chain lab verify surfaces-3x2
 ```
 
 Useful defaults:
@@ -45,7 +48,8 @@ The CLI deliberately stays thin:
 - validator source APIs remain owned by `jackrabbit-oak`
 - browser-facing `/ops/v1/*` remains owned by `oak-chain-edge-worker`
 - top-level `oak-chain` remains single-cluster aware
-- topology bring-up and staircase work stay under `oak-chain mock ...`
+- `oak-chain mock ...` stays single-cluster to preserve parity with sepolia and mainnet operating shape
+- topology bring-up and staircase work live under `oak-chain lab ...`
 - local script orchestration remains owned by `oak-chain-infra`
 
 ## Layout
@@ -66,9 +70,9 @@ The CLI deliberately stays thin:
 ## Current Status
 
 - `mock`: active and populated from legacy `blockchain-aem-infra` local-development/load-test scripts.
-  - includes single-cluster lifecycle plus local `3x2` sharding topology wrappers
+  - CLI parity target is single-cluster local operation
   - uses explicit config surfaces for `OAK_CLUSTER_NAME`, `CLUSTER_RUNTIME_ROOT`, `OAK_VALIDATOR_HTTP_BASE_PORT`, `AERON_DIR_BASE`, and `AERON_CLUSTER_BASE_PORT`
-  - current single-host `3x2` proof is still partially blocked; see `modes/mock/validators/TROUBLESHOOTING.md` for the current Aeron findings
+  - CLI `lab` namespace wraps the local `3x2`, staircase, and related testing flows that still live under `modes/mock/validators/...`
 - `sepolia`: local validator lifecycle automation available; AWS topology remains stub.
 - `mainnet`: stub plus imported legacy standalone AWS Terraform skeleton.
 
