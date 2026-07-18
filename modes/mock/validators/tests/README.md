@@ -6,6 +6,11 @@ intent instead of historical file drift.
 Old top-level commands are preserved as wrappers for compatibility, but new
 work should prefer the categorized paths below.
 
+The normative design and evidence requirements for new consensus validation
+work are in [CONSENSUS-TEST-CHARTER.md](CONSENSUS-TEST-CHARTER.md). Existing
+scripts are not formal gates unless they satisfy that charter's assertion and
+evidence contract.
+
 ## Layout
 
 - `lib/`

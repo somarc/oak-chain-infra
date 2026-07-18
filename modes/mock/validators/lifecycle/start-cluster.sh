@@ -2,6 +2,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export OAK_BLOCKCHAIN_MODE="${OAK_BLOCKCHAIN_MODE:-mock}"
+export OAK_RATE_LIMIT_ENABLED="${OAK_RATE_LIMIT_ENABLED:-false}"
+export OAK_CLUSTER_ENV="${OAK_CLUSTER_ENV:-test}"
+export OAK_CLUSTER_SESSION_TIMEOUT_MINUTES="${OAK_CLUSTER_SESSION_TIMEOUT_MINUTES:-1}"
 VALIDATOR_SCRIPT="$SCRIPT_DIR/../debug/run-validator-node.sh"
 PREVENT_SLEEP_SCRIPT="$SCRIPT_DIR/prevent-sleep.sh"
 WATCHDOG_SCRIPT="$SCRIPT_DIR/../monitoring/validator-failure-watchdog.sh"
@@ -79,7 +83,7 @@ Options:
   --fresh            Stop validators/proxy, wipe validator runtime state, clean Aeron dirs, then start clean.
   --build            Build oak-segment-consensus and optional validator-side modules present in the current branch.
   --cluster-size N   Aeron member count for mock cluster (3 or 5). Default: $CLUSTER_SIZE.
-  --mock-epoch-seconds N  Mock epoch duration in seconds (default: $MOCK_EPOCH_SECONDS).
+  --mock-epoch-seconds N  Mock GC epoch duration in seconds (default: $MOCK_EPOCH_SECONDS).
   --reset-cluster-wallet  Delete and regenerate cluster wallet before startup.
   --no-caffeinate    Do not start sleep prevention.
   --wait-seconds N   Readiness wait timeout (default: $WAIT_SECONDS).
@@ -110,7 +114,8 @@ Environment:
   OAK_CONSENSUS_MAX_PENDING_MESSAGES    Backpressure pending cap (OSGi cfg + optional JVM fallback)
   OAK_CONSENSUS_BACKPRESSURE_TIMEOUT_MS Backpressure timeout ms (OSGi cfg + optional JVM fallback)
   OAK_QUEUE_TUNING_SYSTEM_PROP_FALLBACK true|false (default true). Keep JVM -D fallback while validating OSGi pickup.
-  OAK_MOCK_EPOCH_DURATION_SECONDS       Mock epoch duration in seconds (default: $MOCK_EPOCH_SECONDS).
+  OAK_MOCK_EPOCH_DURATION_SECONDS       Mock GC epoch duration in seconds (default: $MOCK_EPOCH_SECONDS).
+  OAK_RATE_LIMIT_ENABLED                true|false HTTP rate limiting (default false in mock mode).
 EOF
 }
 
