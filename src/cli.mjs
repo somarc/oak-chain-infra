@@ -4,6 +4,7 @@ import { constants as fsConstants } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { runOpsBoard } from './ops-tui.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -821,6 +822,7 @@ function printHelp() {
   println('  oak-chain events tail [--base-url URL]');
   println('  oak-chain api get <path> [--base-url URL]');
   println('  oak-chain doctor [--base-url URL] [--peer URL]');
+  println('  oak-chain ops board [--ops-url URL] [--interval-ms N] [--once]');
   println('  oak-chain mock up|down|status [--dry-run] [-- <script args...>]');
   println('  oak-chain mock verify smoke|binary|surfaces-single [--dry-run] [-- <script args...>]');
   println('  oak-chain lab 3x2 up|down|status [--dry-run] [-- <script args...>]');
@@ -829,6 +831,7 @@ function printHelp() {
   println('');
   println('Global options:');
   println('  --base-url URL      Override the seed validator URL.');
+  println('  --ops-url URL       Override the governed OPS adapter URL (default http://127.0.0.1:8787).');
   println('  --profile NAME      mock-local, sepolia-local, sepolia-readonly, mainnet-readonly, prod-readonly.');
   println('  --auth-token TOKEN  Send Authorization header for remote commands.');
   println('  --watch SEC         Re-run read commands on an interval.');
@@ -838,6 +841,12 @@ function printHelp() {
   println('  --raw               Print raw string output without pretty JSON wrapping.');
   println('  --json              Accepted for compatibility; JSON is the default output.');
   println('  --dry-run           Print the script invocation instead of executing it.');
+  println('  --once              Render one OPS board snapshot and exit.');
+  println('  --interval-ms N     OPS board refresh interval (default 2000).');
+  println('  --runtime-root PATH Local runtime root used for mock log aggregation.');
+  println('  --no-local-logs     Disable local active-log aggregation.');
+  println('  --color             Force ANSI colour, including one-shot output.');
+  println('  --no-color          Disable ANSI colour (also honors NO_COLOR).');
   println('  -h, --help          Show this help.');
 }
 
@@ -929,6 +938,11 @@ export async function main(argv = process.argv.slice(2)) {
 
   if (group === 'doctor' && !action) {
     await runReadable('doctor', async () => buildDoctorReport(profile.baseUrl, parsed.options), parsed.options);
+    return;
+  }
+
+  if (group === 'ops' && action === 'board') {
+    await runOpsBoard(parsed.options);
     return;
   }
 

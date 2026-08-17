@@ -25,6 +25,7 @@ oak-chain peer list
 oak-chain peer probe
 oak-chain proposal status <proposalId> --base-url http://127.0.0.1:8090
 oak-chain doctor
+oak-chain ops board
 
 oak-chain mock up -- --fresh --build
 oak-chain mock verify smoke
@@ -41,6 +42,8 @@ Useful defaults:
 - `--profile prod-readonly`
 - `--peer` to restrict peer fanout to a single discovered validator
 - `--dry-run` to inspect wrapped script invocations
+- `--ops-url` to point the read-only TUI at a governed OPS adapter
+- `--once` to render one board snapshot for terminals, CI evidence, or piping
 - `--field` and `--raw` for narrow machine-readable output
 
 The CLI deliberately stays thin:
@@ -51,6 +54,27 @@ The CLI deliberately stays thin:
 - `oak-chain mock ...` stays single-cluster to preserve parity with sepolia and mainnet operating shape
 - topology bring-up and staircase work live under `oak-chain lab ...`
 - local script orchestration remains owned by `oak-chain-infra`
+
+### Cluster operations board
+
+Run the read-only-first terminal board against the local OPS proxy:
+
+```bash
+oak-chain ops board
+```
+
+Use `q` to quit and `r` to refresh immediately. For a remote environment, pass an OPS adapter URL and disable the mock-local log adapter:
+
+```bash
+oak-chain ops board \
+  --ops-url https://ops.example.net \
+  --profile prod-readonly \
+  --no-local-logs
+```
+
+Colour is enabled automatically in an interactive terminal. Use `--color` to preserve it in one-shot output or `--no-color`/`NO_COLOR=1` for plain text.
+
+The lifecycle scripts remain the recoverable control plane; the TUI is a view over governed telemetry rather than a reimplementation of startup logic. See [`docs/OPS-TUI-ARCHITECTURE.md`](docs/OPS-TUI-ARCHITECTURE.md) for the structured lifecycle-event contract and production roadmap.
 
 ## Layout
 
