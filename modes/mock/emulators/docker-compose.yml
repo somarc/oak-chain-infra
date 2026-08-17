@@ -1,0 +1,35 @@
+services:
+  floci:
+    image: ${FLOCI_IMAGE:-floci/floci@sha256:eab36252ea43a4a73928423f0372219052c5c6f87207f6c4754db14b91d6ed30}
+    ports:
+      - "127.0.0.1:${FLOCI_PORT:-4566}:4566"
+    environment:
+      SERVICES: s3,dynamodb
+      DEFAULT_REGION: us-east-1
+      PERSISTENCE: true
+      DATA_DIR: /var/lib/floci/data
+    volumes:
+      - floci-data:/var/lib/floci/data
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:4566/_floci/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+      start_period: 5s
+
+  floci-az:
+    image: ${FLOCI_AZ_IMAGE:-floci/floci-az@sha256:39425ae982c478c92685e159c66a8deb393766192d8b6b74aa078bf9587dbbfe}
+    ports:
+      - "127.0.0.1:${FLOCI_AZ_PORT:-4577}:4577"
+    volumes:
+      - floci-az-data:/var/lib/floci-az/data
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:4577/devstoreaccount1?comp=list"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+      start_period: 5s
+
+volumes:
+  floci-data:
+  floci-az-data:
