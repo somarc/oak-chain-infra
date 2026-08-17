@@ -2,6 +2,8 @@
 
 Progressive load tests for validating Oak Chain performance and stability.
 
+Prerequisites: Bash, curl, Python 3, OpenSSL, and `jq` when accepted-write capture is enabled.
+
 ## Ladder (Progressive Intensity)
 
 | Script | Duration | Clients | Writes/Client | Binary Mix | Purpose |
@@ -21,8 +23,9 @@ Progressive load tests for validating Oak Chain performance and stability.
 | `12-unreachable-pause-rejoin-draft.sh` | 15 min (default) | via `06` | inherited | inherited | Pause one follower process (SIGSTOP) during active load, then resume (SIGCONT) and evaluate catch-up |
 
 Binary mix defaults:
-- Client-side IPFS CIDs are the default.
-- Validator-hosted binaries (multipart) require `paymentTier=PRIORITY` and are a smaller subset of binary traffic.
+- Validator-hosted binaries are the default effective path.
+- Synthetic client-side `ipfsCid` traffic is disabled by default because the validator now requires known CID mappings for enterprise CID writes.
+- Set `ALLOW_SYNTHETIC_IPFS_CIDS=true` only if you intentionally want the legacy synthetic-CID path (for example, to reproduce `unknown_ipfs_cid` rejections).
 
 ## How to Run
 
@@ -47,6 +50,9 @@ export MIN_WRITES_PER_CLIENT=500
 export MAX_WRITES_PER_CLIENT=5000
 export BINARY_PERCENT=20
 export VALIDATOR_BINARY_PERCENT=30
+export ALLOW_SYNTHETIC_IPFS_CIDS=false
+export HTTP_CONNECT_TIMEOUT_SECONDS=3
+export HTTP_REQUEST_TIMEOUT_SECONDS=30
 export SLEEP_MIN_MS=25
 export SLEEP_MAX_MS=200
 export CAPTURE_WRITE_ACCEPTS=false

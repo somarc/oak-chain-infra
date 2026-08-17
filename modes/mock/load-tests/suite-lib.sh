@@ -3,6 +3,9 @@ set -e
 
 LOG_DIR="${LOG_DIR:-$HOME/oak-chain/logs}"
 VALIDATOR_URL="${VALIDATOR_URL:-http://localhost:8090}"
+HTTP_MAX_REDIRECTS="${HTTP_MAX_REDIRECTS:-5}"
+HTTP_CONNECT_TIMEOUT_SECONDS="${HTTP_CONNECT_TIMEOUT_SECONDS:-3}"
+HTTP_REQUEST_TIMEOUT_SECONDS="${HTTP_REQUEST_TIMEOUT_SECONDS:-30}"
 
 mkdir -p "$LOG_DIR"
 
@@ -128,12 +131,82 @@ select_payment_tier() {
     fi
 }
 
+curl_follow_redirects() {
+    curl \
+        --location \
+        --max-redirs "$HTTP_MAX_REDIRECTS" \
+        --connect-timeout "$HTTP_CONNECT_TIMEOUT_SECONDS" \
+        --max-time "$HTTP_REQUEST_TIMEOUT_SECONDS" \
+        --post301 \
+        --post302 \
+        --post303 \
+        "$@"
+}
+
+curl_http_code() {
+    local output_file="$1"
+    shift
+
+    local http_code
+    if http_code=$(curl_follow_redirects "$@" -o "$output_file" -w "%{http_code}" 2>/dev/null); then
+        printf '%s' "$http_code"
+    else
+        printf '000'
+    fi
+}
+
+resolve_current_leader_url() {
+    local consensus_json
+    consensus_json=$(curl -s --max-time 2 "${VALIDATOR_URL}/v1/consensus/status" 2>/dev/null || true)
+    if [ -z "$consensus_json" ]; then
+        printf '%s' "$VALIDATOR_URL"
+        return
+    fi
+
+    local leader_url
+    leader_url=$(printf '%s' "$consensus_json" | python3 -c 'import json,sys
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    print("")
+    raise SystemExit(0)
+value = data.get("currentLeader") or ""
+print(value if isinstance(value, str) else "")
+' 2>/dev/null || true)
+
+    if [ -n "$leader_url" ]; then
+        printf '%s' "$leader_url"
+    else
+        printf '%s' "$VALIDATOR_URL"
+    fi
+}
+
 register_client() {
     local wallet=$1
     local client_id=$2
-    curl -s -X POST "${VALIDATOR_URL}/v1/register-client" \
-        -H "Content-Type: application/x-www-form-urlencoded" \
-        -d "clientId=client-${client_id}" \
-        -d "clientUrl=http://client-${client_id}.local" \
-        -d "walletAddress=${wallet}" >/dev/null
+    local client_type="${3:-}"
+    local register_url
+    register_url=$(resolve_current_leader_url)
+    local response_file
+    response_file=$(mktemp "${TMPDIR:-/tmp}/oak-register-client.XXXXXX")
+
+    local curl_args=(
+        -s -X POST "${register_url}/v1/register-client"
+        -H "Content-Type: application/x-www-form-urlencoded"
+        -d "clientId=client-${client_id}"
+        -d "clientUrl=http://client-${client_id}.local"
+        -d "walletAddress=${wallet}"
+    )
+    if [ -n "$client_type" ]; then
+        curl_args+=( -d "clientType=${client_type}" )
+    fi
+
+    local http_code
+    http_code=$(curl_http_code "$response_file" "${curl_args[@]}")
+    if [[ ! "$http_code" =~ ^2[0-9][0-9]$ ]]; then
+        echo "ERROR: client registration failed for client-${client_id} at ${register_url} (HTTP ${http_code}): $(cat "$response_file" 2>/dev/null)" >&2
+        rm -f "$response_file"
+        return 1
+    fi
+    rm -f "$response_file"
 }
