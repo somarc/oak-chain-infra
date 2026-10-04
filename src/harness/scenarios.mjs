@@ -52,7 +52,10 @@ export async function preflight({ http, manifest, run, target }, params) {
   });
   const startTimes = processes.map((proc) => (proc.startedAt ? Date.parse(proc.startedAt) : null));
   const jarAge = jar.mtimeMs ?? null;
-  const ranCurrentJar = jarAge !== null && startTimes.every((value) => value !== null && value >= jarAge);
+  // ps reports start times to the whole second, so compare at that resolution: a validator started in
+  // the same second the jar was written would otherwise look older than it.
+  const jarSecond = jarAge === null ? null : Math.floor(jarAge / 1000) * 1000;
+  const ranCurrentJar = jarSecond !== null && startTimes.every((value) => value !== null && value >= jarSecond);
   run.assert({
     assertionId: 'processes.after-jar', expected: 'every validator started after the current jar was built (so it runs that jar)',
     evidence: 'manifest.json#processes', note: 'process start vs jar mtime; a process older than the jar may run a previous build',
