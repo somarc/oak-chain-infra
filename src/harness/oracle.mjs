@@ -5,8 +5,8 @@
 // enough for value checks on string properties of bounded test content, but it is lossy
 // (types dropped, arrays coerced), so it is not the charter §8 strict exporter.
 //
-// Per-node apply-time stamps make strict equality fail today; they are reported, and a
-// semantic comparison that ignores them is a diagnostic only — it never overrides strict.
+// Per-node apply-time stamps broke strict equality before 1cbca7e717 (cluster-log timestamp);
+// a semantic comparison that ignores them stays a diagnostic only and never overrides strict.
 
 export const VOLATILE_PROPERTIES = Object.freeze(['timestamp']);
 

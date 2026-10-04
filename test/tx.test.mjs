@@ -15,7 +15,7 @@ import {
 } from '../src/tx.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const jar = path.resolve(repoRoot, '../jackrabbit-oak/oak-segment-consensus/target/oak-segment-consensus.jar');
+const jar = process.env.OAK_CONSENSUS_JAR || path.resolve(repoRoot, '../jackrabbit-oak/oak-segment-consensus/target/oak-segment-consensus.jar');
 const HARDHAT_0 = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
 
 test('keys, signatures and recovery follow Ethereum conventions', () => {
@@ -54,12 +54,16 @@ test('write and delete transactions carry exactly the fields the runtime contrac
   assert.match(toForm({ message: 'a "b" & c=d' }), /^message=a\+%22b%22\+%26\+c%3Dd$/);
 });
 
-function standardEip191Sign(message, privateKeyHex) {
+function prefixedSign(message, privateKeyHex, length) {
   const bytes = new TextEncoder().encode(message);
-  const digest = keccak256(new Uint8Array([...new TextEncoder().encode(`\u0019Ethereum Signed Message:\n${bytes.length}`), ...bytes]));
+  const digest = keccak256(new Uint8Array([...new TextEncoder().encode(`\u0019Ethereum Signed Message:\n${length}`), ...bytes]));
   const recovered = secp.sign(digest, Uint8Array.from(Buffer.from(privateKeyHex.slice(2), 'hex')), { format: 'recovered', prehash: false });
   return `0x${Buffer.from([...recovered.slice(1), 27 + recovered[0]]).toString('hex')}`;
 }
+
+const standardEip191Sign = (message, key) => prefixedSign(message, key, new TextEncoder().encode(message).length);
+// What the runtime verified before a1741502c6 (Java String.length(), UTF-16 code units).
+const utf16LengthSign = (message, key) => prefixedSign(message, key, message.length);
 
 const javaReady = existsSync(jar)
   && spawnSync('javac', ['-version']).status === 0
@@ -97,10 +101,11 @@ public class VerifyVectors {
       ['long', 'x'.repeat(5_000), personalSign('x'.repeat(5_000), signer.privateKey), true],
       ['wrong signer', 'hello oak', personalSign('hello oak', other.privateKey), false],
       ['wrong message', 'tampered', personalSign('hello oak', signer.privateKey), false],
-      // Contract quirk, documented in TRANSACTION-CONTRACT.md: the runtime prefixes the UTF-16
-      // length, so a standard (UTF-8 byte length) EIP-191 signature agrees only for ASCII.
+      // The runtime verifies standard EIP-191 (UTF-8 byte length) since a1741502c6; the old
+      // UTF-16-length prefix now fails for non-ASCII messages.
       ['standard EIP-191, ascii', 'hello oak', standardEip191Sign('hello oak', signer.privateKey), true],
-      ['standard EIP-191, non-ascii', 'ünïcødé', standardEip191Sign('ünïcødé', signer.privateKey), false],
+      ['standard EIP-191, non-ascii', 'ünïcødé 🌳', standardEip191Sign('ünïcødé 🌳', signer.privateKey), true],
+      ['utf-16 length prefix, non-ascii', 'ünïcødé 🌳', utf16LengthSign('ünïcødé 🌳', signer.privateKey), false],
     ];
     const input = vectors.map(([, message, signature]) => [Buffer.from(message, 'utf8').toString('base64'), signature, signer.address].join('\t')).join('\n');
     const output = await new Promise((resolve, reject) => {

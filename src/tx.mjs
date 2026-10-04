@@ -3,9 +3,8 @@
 // The runtime is the authority. This module produces exactly what it verifies:
 //   - signature: secp256k1 personal_sign by walletAddress, 65 bytes r‖s‖v (v = 27/28);
 //   - write message signed verbatim; delete signs contentPath;
-//   - the personal_sign prefix length is the message's UTF-16 code-unit count, because the
-//     runtime builds it from Java String.length() (EthereumSignatureVerifier.hashMessage).
-//     That equals standard EIP-191 (UTF-8 byte length) only for ASCII messages;
+//   - the personal_sign prefix length is the message's UTF-8 byte length (standard EIP-191,
+//     EthereumSignatureVerifier.hashMessage since a1741502c6; before it, Java String.length());
 //   - ethereumTxHash defaults to proposalId, which is the mock settlement's transaction hash
 //     (SimpleEvmBridge). Chain-backed callers pass the real settlement tx hash.
 //
@@ -38,10 +37,10 @@ export function addressOf(privateKeyHex) {
   return `0x${hex(keccak256(publicKey.slice(1)).slice(-20))}`;
 }
 
-// Digest the runtime verifies: keccak256(prefix + javaLength(message) + message) over UTF-8.
+// Digest the runtime verifies: keccak256(prefix + utf8Length(message) + message), i.e. EIP-191.
 export function runtimeMessageDigest(message) {
-  const text = String(message ?? '');
-  return keccak256(ENCODER.encode(`${PREFIX}${text.length}${text}`));
+  const bytes = ENCODER.encode(String(message ?? ''));
+  return keccak256(new Uint8Array([...ENCODER.encode(`${PREFIX}${bytes.length}`), ...bytes]));
 }
 
 export function personalSign(message, privateKeyHex) {
