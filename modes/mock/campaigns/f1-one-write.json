@@ -1,0 +1,8 @@
+{
+  "id": "f1-one-write",
+  "title": "F1-01 one write: accepted, committed, and the exact value on every validator (plus F1-01b value fidelity)",
+  "riskClass": "B",
+  "charter": ["F1-01"],
+  "scenario": "one-write",
+  "params": { "terminalSeconds": 90, "convergenceSeconds": 60, "valueFidelity": true }
+}

@@ -1,0 +1,8 @@
+{
+  "id": "reconcile-accepted",
+  "title": "Reconcile a load run's accepted writes: terminal outcome, presence and equality on every validator",
+  "riskClass": "A",
+  "charter": ["F1-01", "O2-05"],
+  "scenario": "reconcile-accepted",
+  "params": { "sample": 0, "concurrency": 6 }
+}

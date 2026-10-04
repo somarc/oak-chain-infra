@@ -4,7 +4,10 @@ import { constants as fsConstants } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { readFile } from 'node:fs/promises';
+import { formatSummary, listCampaigns, runCampaign } from './harness/index.mjs';
 import { runMockConsole } from './mock-console.mjs';
+import { runTx } from './tx-cli.mjs';
 import { runOpsBoard } from './ops-tui.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -806,6 +809,25 @@ async function runLabCommand(action, third, passthrough, dryRun) {
   await spawnScript(scriptPath, passthrough, dryRun);
 }
 
+async function runCampaignCommand(verb, name, options) {
+  if (verb === 'list') {
+    for (const campaign of await listCampaigns(REPO_ROOT)) {
+      println(`${campaign.id.padEnd(22)} class ${campaign.riskClass}  ${campaign.charter.join(',').padEnd(30)} ${campaign.title}`);
+    }
+    return;
+  }
+  if (verb !== 'run' || !name) {
+    throw new Error('Usage: oak-chain mock campaign list | oak-chain mock campaign run <name> [--allow-class B] [--allow-live-root] [--runtime-root PATH] [--runs-dir PATH] [--accepted DIR]');
+  }
+  const result = await runCampaign(name, options, {
+    log: (line) => process.stderr.write(`${line}\n`),
+    repoRoot: REPO_ROOT,
+  });
+  const tsv = await readFile(path.join(result.dir, 'assertions.tsv'), 'utf8');
+  process.stdout.write(formatSummary(result, tsv));
+  if (result.summary.status !== 'PASS') process.exitCode = 2;
+}
+
 function printHelp() {
   println('oak-chain v0');
   println('');
@@ -826,6 +848,9 @@ function printHelp() {
   println('  oak-chain ops board [--ops-url URL] [--interval-ms N] [--once]');
   println('  oak-chain mock up|down|status [--dry-run] [-- <script args...>]');
   println('  oak-chain mock console [--runtime-root PATH] [--cluster-size 3|5] [--lifecycle-dir PATH] [--once]');
+  println('  oak-chain mock campaign list');
+  println('  oak-chain mock campaign run <name> [--allow-class B] [--allow-live-root] [--runtime-root PATH] [--runs-dir PATH] [--accepted DIR]');
+  println('  oak-chain tx key|write|delete|verify ...   Conformant signed transactions (modes/mock/TRANSACTION-CONTRACT.md)');
   println('  oak-chain mock verify smoke|binary|surfaces-single [--dry-run] [-- <script args...>]');
   println('  oak-chain lab 3x2 up|down|status [--dry-run] [-- <script args...>]');
   println('  oak-chain lab verify surfaces-3x2|staircase [--dry-run] [-- <script args...>]');
@@ -947,6 +972,16 @@ export async function main(argv = process.argv.slice(2)) {
 
   if (group === 'ops' && action === 'board') {
     await runOpsBoard(parsed.options);
+    return;
+  }
+
+  if (group === 'tx') {
+    process.exitCode = runTx(action, parsed.options);
+    return;
+  }
+
+  if (group === 'mock' && action === 'campaign') {
+    await runCampaignCommand(third, parsed.positionals[3], parsed.options);
     return;
   }
 

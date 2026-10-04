@@ -1,0 +1,8 @@
+{
+  "id": "p0-preflight",
+  "title": "P0 preflight: provenance, topology, leader/quorum parity, observability contract",
+  "riskClass": "A",
+  "charter": ["P0-01", "P0-02", "P0-03", "P0-04", "P0-05"],
+  "scenario": "preflight",
+  "params": { "parityRounds": 3, "idleSeconds": 30 }
+}
