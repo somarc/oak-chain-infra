@@ -16,7 +16,7 @@ Usage: $(basename "$0") [--cluster-size 3|5] [--keep-runtime]
 
 Options:
   --cluster-size N  Stop scope for expected local cluster size (3 or 5). Default: auto(0..4).
-  --keep-runtime   Skip Aeron runtime directory cleanup.
+  --keep-runtime   Skip Aeron media directory cleanup.
 EOF
 }
 
@@ -115,18 +115,15 @@ cleanup_aeron_runtime() {
   local cleaned_count=0
   username="$(whoami)"
   custom_aeron_dir_base="$(resolved_aeron_dir_base)"
-  echo "• Cleaning Aeron runtime directories"
+  # Media (driver) dirs only: aeron-cluster-node-N holds the cluster log and archive, which must
+  # survive a stop together with the Oak store.
+  echo "• Cleaning Aeron media directories (cluster log and archive kept)"
   for node in "${NODES[@]}"; do
     local path
-    path="$HOME/oak-chain/validator-$node/aeron-cluster-node-$node"
-    if [ -d "$path" ]; then
-      echo "  - Removing: $path"
-      rm -rf "$path" 2>/dev/null && cleaned_count=$((cleaned_count + 1)) || true
-    fi
     path="$HOME/oak-chain/validator-$node/aeron-cluster-node-$node-driver"
     if [ -d "$path" ]; then
       echo "  - Removing: $path"
-      rm -rf "$path" 2>/dev/null || true
+      rm -rf "$path" 2>/dev/null && cleaned_count=$((cleaned_count + 1)) || true
     fi
     if [ -n "$custom_aeron_dir_base" ]; then
       path="${custom_aeron_dir_base}-${node}-driver"
@@ -177,7 +174,7 @@ cleanup_aeron_runtime() {
   done < <(find /tmp -maxdepth 1 -type d -name "aeron-*" 2>/dev/null || true)
 
   if [ "$cleaned_count" -gt 0 ]; then
-    echo "• Cleaned $cleaned_count Aeron cluster directory(ies)"
+    echo "• Cleaned $cleaned_count Aeron media directory(ies)"
   fi
 }
 
@@ -192,9 +189,13 @@ for node in "${NODES[@]}"; do
   if is_pid_alive "$pid"; then
     echo "• Stopping validator-$node (PID $pid)"
     kill "$pid" || true
-    sleep 1
+    waited=0
+    while is_pid_alive "$pid" && [ "$waited" -lt "${STOP_WAIT_SECONDS:-30}" ]; do
+      sleep 1
+      waited=$((waited + 1))
+    done
     if is_pid_alive "$pid"; then
-      echo "  - force kill $pid"
+      echo "  - force kill $pid (still running after ${STOP_WAIT_SECONDS:-30}s)"
       kill -9 "$pid" || true
     fi
   else

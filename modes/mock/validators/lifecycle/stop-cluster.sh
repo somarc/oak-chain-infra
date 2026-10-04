@@ -26,11 +26,16 @@ Usage: $(basename "$0") [--cluster-size 3|5] [--keep-runtime]
 
 Options:
   --cluster-size N  Stop scope for expected mock cluster size (3 or 5). Default: auto(0..4).
-  --keep-runtime   Skip Aeron runtime directory cleanup.
+  --keep-runtime   Skip Aeron media directory cleanup.
+
+A plain stop keeps each member's Aeron cluster log and archive (validator-N/aeron-cluster-node-N):
+they belong with the Oak store and are only reset together with it (start-cluster.sh --fresh).
+STOP_WAIT_SECONDS (default 30) bounds the graceful SIGTERM wait before SIGKILL.
 EOF
 }
 
 KEEP_RUNTIME=false
+STOP_WAIT_SECONDS="${STOP_WAIT_SECONDS:-30}"
 while (($# > 0)); do
   case "$1" in
     --cluster-size)
@@ -99,15 +104,28 @@ stop_validator_processes() {
   echo "• Found validator processes: $java_pids"
   echo "  -> Sending TERM signal..."
   echo "$java_pids" | xargs kill 2>/dev/null || true
-  sleep 3
+  # shellcheck disable=SC2086
+  wait_graceful $java_pids
+}
 
-  local remaining
-  remaining="$(find_validator_processes)"
-  if [ -n "$remaining" ]; then
-    echo "  -> Force killing remaining processes: $remaining"
-    echo "$remaining" | xargs kill -9 2>/dev/null || true
+# SIGTERM was sent; give the validators up to STOP_WAIT_SECONDS to shut Aeron and Oak down
+# cleanly (same budget as member.sh), then SIGKILL whatever is left.
+wait_graceful() {
+  local waited=0 pid alive
+  [ "$#" -gt 0 ] || return 0
+  while [ "$waited" -lt "$STOP_WAIT_SECONDS" ]; do
+    alive=()
+    for pid in "$@"; do is_pid_alive "$pid" && alive+=("$pid"); done
+    [ "${#alive[@]}" -eq 0 ] && return 0
     sleep 1
-  fi
+    waited=$((waited + 1))
+  done
+  for pid in "$@"; do
+    if is_pid_alive "$pid"; then
+      echo "  - force kill $pid (still running after ${STOP_WAIT_SECONDS}s)"
+      kill -9 "$pid" 2>/dev/null || true
+    fi
+  done
 }
 
 # Stop stays available on every root (it is how the live cluster is stopped), so it is scoped
@@ -131,14 +149,11 @@ cleanup_aeron_runtime() {
   local cleaned_count=0
   username="$(whoami)"
   custom_aeron_dir_base="$(resolved_aeron_dir_base)"
-  echo "• Cleaning Aeron runtime directories"
+  # Media (driver) dirs only. aeron-cluster-node-N holds the cluster log and archive, which must
+  # survive a stop: a member restarted without them starts a new log over a populated Oak store.
+  echo "• Cleaning Aeron media directories (cluster log and archive kept)"
   for node in "${NODES[@]}"; do
     local path
-    path="$CLUSTER_RUNTIME_ROOT/validator-$node/aeron-cluster-node-$node"
-    if [ -d "$path" ]; then
-      echo "  - Removing: $path"
-      rm -rf "$path" 2>/dev/null && cleaned_count=$((cleaned_count + 1)) || true
-    fi
     path="$CLUSTER_RUNTIME_ROOT/validator-$node/aeron-cluster-node-$node-driver"
     if [ -d "$path" ]; then
       echo "  - Removing: $path"
@@ -152,18 +167,13 @@ cleanup_aeron_runtime() {
     path="$CLUSTER_RUNTIME_ROOT/validator-$node/aeron-media-$node-driver"
     if [ -d "$path" ]; then
       echo "  - Removing: $path"
-      rm -rf "$path" 2>/dev/null || true
+      rm -rf "$path" 2>/dev/null && cleaned_count=$((cleaned_count + 1)) || true
     fi
     if [ -n "$custom_aeron_dir_base" ]; then
       path="${custom_aeron_dir_base}-${node}-driver"
       if [ -d "$path" ]; then
         echo "  - Removing: $path"
-        rm -rf "$path" 2>/dev/null || true
-      fi
-      path="${custom_aeron_dir_base}-${node}"
-      if [ -d "$path" ]; then
-        echo "  - Removing: $path"
-        rm -rf "$path" 2>/dev/null || true
+        rm -rf "$path" 2>/dev/null && cleaned_count=$((cleaned_count + 1)) || true
       fi
     fi
     path="$CLUSTER_RUNTIME_ROOT/validator-$node/aeron-$username-$node-driver"
@@ -209,10 +219,11 @@ cleanup_aeron_runtime() {
   fi
 
   if [ "$cleaned_count" -gt 0 ]; then
-    echo "• Cleaned $cleaned_count Aeron cluster directory(ies)"
+    echo "• Cleaned $cleaned_count Aeron media directory(ies)"
   fi
 }
 
+stopping_pids=()
 for node in "${NODES[@]}"; do
   pid_file="$PID_DIR/validator-${node}.pid"
   if [ ! -f "$pid_file" ]; then
@@ -226,16 +237,13 @@ for node in "${NODES[@]}"; do
   elif is_pid_alive "$pid"; then
     echo "• Stopping validator-$node (PID $pid)"
     kill "$pid" || true
-    sleep 1
-    if is_pid_alive "$pid"; then
-      echo "  - force kill $pid"
-      kill -9 "$pid" || true
-    fi
+    stopping_pids+=("$pid")
   else
     echo "• Validator-$node pid file stale"
   fi
   rm -f "$pid_file"
 done
+if [ "${#stopping_pids[@]}" -gt 0 ]; then wait_graceful "${stopping_pids[@]}"; fi
 
 if [ -f "$OPS_PROXY_PID_FILE" ]; then
   ops_pid="$(cat "$OPS_PROXY_PID_FILE")"
@@ -276,11 +284,11 @@ if [ -x "$PREVENT_SLEEP_SCRIPT" ]; then
 fi
 
 if [ -x "$WATCHDOG_SCRIPT" ]; then
-  "$WATCHDOG_SCRIPT" --stop >/dev/null 2>&1 || true
+  PID_DIR="$PID_DIR" "$WATCHDOG_SCRIPT" --stop >/dev/null 2>&1 || true
 fi
 
 if [ -x "$LOAD_OBSERVER_SCRIPT" ]; then
-  "$LOAD_OBSERVER_SCRIPT" --stop >/dev/null 2>&1 || true
+  PID_DIR="$PID_DIR" "$LOAD_OBSERVER_SCRIPT" --stop >/dev/null 2>&1 || true
 fi
 
 echo "✅ Stop sequence complete for cluster '$CLUSTER_NAME'"
