@@ -15,6 +15,8 @@ if [ -f "$SCRIPT_DIR/config.sh" ]; then
     # Optional local overrides for validator URL, wallets, and fixture paths.
     source "$SCRIPT_DIR/config.sh"
 fi
+# The write is built by the shared conformant builder `oak-chain tx` (modes/mock/lib/oak-tx.sh).
+source "$SCRIPT_DIR/../../../lib/oak-tx.sh"
 
 # Colors for output
 RED='\033[0;31m'
@@ -47,18 +49,6 @@ ipfs_api_ready() {
     curl -s -X POST "${base}/api/v0/version" > /dev/null 2>&1
 }
 
-random_hex() {
-    local bytes="$1"
-    if command -v openssl > /dev/null 2>&1; then
-        openssl rand -hex "$bytes" 2>/dev/null
-        return
-    fi
-    python3 - <<PY
-import secrets
-print(secrets.token_hex(${bytes}))
-PY
-}
-
 base64url_no_padding() {
     python3 - "$1" <<'PY'
 import base64
@@ -74,20 +64,15 @@ blob_id_without_size() {
     printf '%s\n' "${blob_id%%#*}"
 }
 
+# Shard-local test wallet (a key we hold) for the first prefix of "HH" or "HH-HH".
 wallet_from_local_prefixes() {
-    local prefixes="$1"
-    python3 - "$prefixes" <<'PY'
-import re
-import sys
-
-value = sys.argv[1].strip()
-match = re.match(r'^([0-9a-fA-F]{2})(?:-([0-9a-fA-F]{2}))?$', value)
-if not match:
-    sys.exit(0)
-
-start = int(match.group(1), 16)
-print(f"0x{start:02x}{0:038x}")
-PY
+    local prefixes
+    prefixes="$(printf '%s' "$1" | tr -d '[:space:]')"
+    case "$prefixes" in
+        [0-9a-fA-F][0-9a-fA-F] | [0-9a-fA-F][0-9a-fA-F]-[0-9a-fA-F][0-9a-fA-F])
+            test_wallet_for_prefix "${prefixes:0:2}"
+            ;;
+    esac
 }
 
 # Check if IPFS is running
@@ -162,6 +147,9 @@ check_validator() {
         fi
         TEST_WALLET="${TEST_WALLET:-$DEFAULT_TEST_WALLET}"
     fi
+    # The write is signed by TEST_WALLET, so it must be a key we hold: any other address selects
+    # the held test key with the same first byte (same shard).
+    TEST_WALLET="$(test_wallet_for_address "$TEST_WALLET")"
 
     if [ "$BLOBSTORE_ACTIVE" = "true" ]; then
         echo -e "${GREEN}✅ BlobStore active (${BLOBSTORE_TYPE})${NC}"
@@ -229,22 +217,24 @@ submit_proposal() {
 
     echo -e "${YELLOW}   Creating proposal...${NC}"
 
-    PROPOSAL_ID="0x$(random_hex 32)"
-    TX_HASH="0x$(random_hex 32)"
-    SIGNATURE="0x$(random_hex 65)"
     MIME_TYPE=$(file -b --mime-type "$BINARY_FILE")
+    # Conformant write: signed by TEST_WALLET's test key over exactly the message, with
+    # ethereumTxHash = proposalId (the mock settlement hash) and no paymentTier.
+    local form
+    if ! form=$(oak_tx_as "$TEST_WALLET" write --content-type file \
+        --message "[IPFS TEST] Binary upload: $(basename "$BINARY_FILE") ($MIME_TYPE)"); then
+        echo -e "${RED}❌ Could not build a signed write for wallet $TEST_WALLET${NC}"
+        exit 1
+    fi
+    PROPOSAL_ID="$(oak_tx_form_field "$form" proposalId)"
+    TX_HASH="$(oak_tx_form_field "$form" ethereumTxHash)"
+    oak_tx_form_to_multipart_args "$form"
 
     echo -e "${YELLOW}   Submitting to validator (multipart form data)...${NC}"
 
     RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$VALIDATOR_URL/v1/propose-write" \
         -H "Expect:" \
-        -F "walletAddress=$TEST_WALLET" \
-        -F "proposalId=$PROPOSAL_ID" \
-        -F "ethereumTxHash=$TX_HASH" \
-        -F "contentType=file" \
-        -F "message=[IPFS TEST] Binary upload: $(basename "$BINARY_FILE") ($MIME_TYPE)" \
-        -F "signature=$SIGNATURE" \
-        -F "paymentTier=standard" \
+        "${OAK_TX_MULTIPART_ARGS[@]}" \
         -F "file=@${BINARY_FILE};type=${MIME_TYPE}")
     
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
@@ -562,5 +552,7 @@ main() {
     echo ""
 }
 
-# Run main
-main
+# Run main (sourcing the script only defines its functions).
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+    main
+fi

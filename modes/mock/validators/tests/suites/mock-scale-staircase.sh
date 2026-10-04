@@ -6,6 +6,8 @@ TESTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 LIFECYCLE_DIR="$TESTS_DIR/../lifecycle"
 CONFIG_DIR="$TESTS_DIR/../config"
 BASE_CONFIGS=("$CONFIG_DIR/mock.env" "$CONFIG_DIR/ipfs.env")
+# shellcheck source=../../lifecycle/lib/root-guard.sh
+source "$LIFECYCLE_DIR/lib/root-guard.sh"
 
 SINGLE_CLUSTER_3_CONFIG="${SINGLE_CLUSTER_3_CONFIG:-$CONFIG_DIR/single-cluster-3.env}"
 SINGLE_CLUSTER_5_CONFIG="${SINGLE_CLUSTER_5_CONFIG:-$CONFIG_DIR/single-cluster-5.env}"
@@ -268,10 +270,12 @@ maybe_build_arg() {
   fi
 }
 
+# Every stop is bound to a staircase config's runtime root. A bare stop-cluster.sh would
+# default to the legacy root ($HOME/oak-chain) and stop the long-lived cluster.
 stop_all_topologies() {
   log "Cleaning all known staircase topologies"
-  "$LIFECYCLE_DIR/stop-cluster.sh" --cluster-size 5 >/dev/null 2>&1 || true
-  "$LIFECYCLE_DIR/stop-cluster.sh" --cluster-size 3 >/dev/null 2>&1 || true
+  run_with_cluster_env "$SINGLE_CLUSTER_5_CONFIG" "$LIFECYCLE_DIR/stop-cluster.sh" --cluster-size 5 >/dev/null 2>&1 || true
+  run_with_cluster_env "$SINGLE_CLUSTER_3_CONFIG" "$LIFECYCLE_DIR/stop-cluster.sh" --cluster-size 3 >/dev/null 2>&1 || true
   "$LIFECYCLE_DIR/stop-3x2.sh" >/dev/null 2>&1 || true
   "$LIFECYCLE_DIR/stop-3x3.sh" >/dev/null 2>&1 || true
   "$LIFECYCLE_DIR/stop-3x2.sh" --cluster-a-config "$DUAL_CLUSTER_A_CONFIG" --cluster-b-config "$DUAL_CLUSTER_B_CONFIG" >/dev/null 2>&1 || true
@@ -378,6 +382,8 @@ run_quorum_envelope() {
     bash "$TESTS_DIR/stability/aeron-quorum-envelope-smoke.sh"
 }
 
+# Wallet arguments are shard selectors: each script signs with the held test key for the
+# address's first byte (modes/mock/lib/oak-tx.sh), so distinct roles use distinct first bytes.
 run_single_cluster_surfaces() {
   local phase_artifact_root="$1"
   local cluster_config="$2"
@@ -520,7 +526,7 @@ phase_triple_cluster() {
   run_logged "${phase_name} cluster-a local surfaces" run_single_cluster_surfaces \
     "${phase_dir}/cluster-a-surfaces" "$FABRIC_CLUSTER_A_CONFIG" "$FABRIC_LOCAL_WRITE_COUNT_PER_ORG" false \
     "0x1100000000000000000000000000000000000000" "0x2200000000000000000000000000000000000000" "0x3300000000000000000000000000000000000000" \
-    "0x1111111111111111111111111111111111111111" "0x2222222222222222222222222222222222222222" "0x4444444444444444444444444444444444444444" "0x5500000000000000000000000000000000000000"
+    "0x1a00000000000000000000000000000000000000" "0x2b00000000000000000000000000000000000000" "0x4444444444444444444444444444444444444444" "0x5500000000000000000000000000000000000000"
 
   run_logged "${phase_name} cluster-b local surfaces" run_single_cluster_surfaces \
     "${phase_dir}/cluster-b-surfaces" "$FABRIC_CLUSTER_B_CONFIG" "$FABRIC_LOCAL_WRITE_COUNT_PER_ORG" false \
@@ -574,7 +580,7 @@ phase_soak() {
     run_logged "${phase_name} cycle=${cycle} cluster-a local surfaces" run_single_cluster_surfaces \
       "${cycle_dir}/cluster-a-surfaces" "$FABRIC_CLUSTER_A_CONFIG" "$SOAK_WRITE_COUNT_PER_ORG" false \
       "0x1100000000000000000000000000000000000000" "0x2200000000000000000000000000000000000000" "0x3300000000000000000000000000000000000000" \
-      "0x1111111111111111111111111111111111111111" "0x2222222222222222222222222222222222222222" "0x4444444444444444444444444444444444444444" "0x5500000000000000000000000000000000000000" \
+      "0x1a00000000000000000000000000000000000000" "0x2b00000000000000000000000000000000000000" "0x4444444444444444444444444444444444444444" "0x5500000000000000000000000000000000000000" \
       "soak-c${cycle}-a"
     run_logged "${phase_name} cycle=${cycle} cluster-b local surfaces" run_single_cluster_surfaces \
       "${cycle_dir}/cluster-b-surfaces" "$FABRIC_CLUSTER_B_CONFIG" "$SOAK_WRITE_COUNT_PER_ORG" false \
@@ -614,6 +620,24 @@ log "Plan: phases=${TOTAL_PHASES} steps=${TOTAL_STEPS}"
 
 stop_all_topologies
 
+# The staircase is risk class D (--fresh on every phase, stability faults). Refuse up front when
+# a phase config binds a protected live root, or its ports are held by another root's processes.
+guard_phase_config() {
+  run_with_cluster_env "$1" oak_guard_require_target_from_env "mock scale staircase (class D) with $(basename "$1")" \
+    || fail "Root guard refused $(basename "$1"); see above"
+}
+[ "$RUN_SINGLE_CLUSTER_3_PHASE" = "true" ] && guard_phase_config "$SINGLE_CLUSTER_3_CONFIG"
+[ "$RUN_SINGLE_CLUSTER_5_PHASE" = "true" ] && guard_phase_config "$SINGLE_CLUSTER_5_CONFIG"
+if [ "$RUN_DUAL_CLUSTER_PHASE" = "true" ]; then
+  guard_phase_config "$DUAL_CLUSTER_A_CONFIG"
+  guard_phase_config "$DUAL_CLUSTER_B_CONFIG"
+fi
+if [ "$RUN_TRIPLE_CLUSTER_PHASE" = "true" ]; then
+  guard_phase_config "$FABRIC_CLUSTER_A_CONFIG"
+  guard_phase_config "$FABRIC_CLUSTER_B_CONFIG"
+  guard_phase_config "$FABRIC_CLUSTER_C_CONFIG"
+fi
+
 if [ "$RUN_SINGLE_CLUSTER_3_PHASE" = "true" ]; then
   phase_single_cluster \
     "phase-01-single-cluster-3" \
@@ -623,8 +647,8 @@ if [ "$RUN_SINGLE_CLUSTER_3_PHASE" = "true" ]; then
     "0x1100000000000000000000000000000000000000" \
     "0x2200000000000000000000000000000000000000" \
     "0x3300000000000000000000000000000000000000" \
-    "0x1111111111111111111111111111111111111111" \
-    "0x2222222222222222222222222222222222222222" \
+    "0x1a00000000000000000000000000000000000000" \
+    "0x2b00000000000000000000000000000000000000" \
     "0x4444444444444444444444444444444444444444" \
     "0x5555555555555555555555555555555555555555"
 fi
@@ -638,8 +662,8 @@ if [ "$RUN_SINGLE_CLUSTER_5_PHASE" = "true" ]; then
     "0x1100000000000000000000000000000000000000" \
     "0x2200000000000000000000000000000000000000" \
     "0x3300000000000000000000000000000000000000" \
-    "0x1111111111111111111111111111111111111111" \
-    "0x2222222222222222222222222222222222222222" \
+    "0x1a00000000000000000000000000000000000000" \
+    "0x2b00000000000000000000000000000000000000" \
     "0x4444444444444444444444444444444444444444" \
     "0x5555555555555555555555555555555555555555"
 fi

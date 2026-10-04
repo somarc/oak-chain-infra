@@ -10,6 +10,12 @@ CLUSTER_B_CONFIG="${CLUSTER_B_CONFIG:-$CONFIG_DIR/3x2-cluster-b.env}"
 
 WALLET_A="${WALLET_A:-0x1100000000000000000000000000000000000000}"
 WALLET_B="${WALLET_B:-0x8800000000000000000000000000000000000000}"
+# Shard-local test wallets (keys we hold): each address selects the held test key with the same
+# first byte, i.e. `oak-chain tx key --prefix HH` (modes/mock/lib/oak-tx.sh).
+# shellcheck source=../../../lib/oak-tx.sh
+source "$TESTS_DIR/../../lib/oak-tx.sh"
+WALLET_A="$(test_wallet_for_address "$WALLET_A")"
+WALLET_B="$(test_wallet_for_address "$WALLET_B")"
 READ_TIMEOUT_SECONDS="${READ_TIMEOUT_SECONDS:-30}"
 READ_POLL_INTERVAL_SECONDS="${READ_POLL_INTERVAL_SECONDS:-1}"
 NO_QUORUM_RETRY_MAX="${NO_QUORUM_RETRY_MAX:-15}"
@@ -85,16 +91,6 @@ fetch_json() {
   printf '%s\n%s\n' "$code" "$body"
 }
 
-random_proposal_id() {
-  local proposal_id
-  proposal_id="$(openssl rand -hex 32 2>/dev/null || python3 - <<'PY'
-import secrets
-print(secrets.token_hex(32))
-PY
-)"
-  printf '0x%s\n' "$proposal_id"
-}
-
 submit_write() {
   local base_url="$1"
   local wallet="$2"
@@ -105,24 +101,19 @@ submit_write() {
   body_file="$(mktemp)"
   header_file="$(mktemp)"
 
-  local tx_hash
-  local proposal_id
-  local signature
-  tx_hash="0x$(openssl rand -hex 32 2>/dev/null || date +%s%N)"
-  proposal_id="$(random_proposal_id)"
-  signature="0x$(openssl rand -hex 65 2>/dev/null || printf '%0130d' 0)"
+  # Conformant transaction from the shared builder: signed by the wallet's test key over
+  # exactly the message, ethereumTxHash = proposalId. Resent unchanged on no_quorum retries.
+  local form
+  form="$(oak_tx_as "$wallet" write --message "[3x2 smoke] ${label}" --content-type page)" || {
+    echo "❌ could not build a signed write for wallet ${wallet}" >&2
+    exit 1
+  }
 
   while :; do
     REQUEST_STATUS="$(curl -s -D "$header_file" -o "$body_file" -w "%{http_code}" \
       -X POST "${base_url}/v1/propose-write" \
       -H "Content-Type: application/x-www-form-urlencoded" \
-      -d "walletAddress=${wallet}" \
-      -d "proposalId=${proposal_id}" \
-      -d "ethereumTxHash=${tx_hash}" \
-      -d "contentType=page" \
-      -d "message=[3x2 smoke] ${label}" \
-      -d "signature=${signature}" \
-      -d "paymentTier=standard" || echo "000")"
+      --data-binary "$form" || echo "000")"
     REQUEST_BODY="$(cat "$body_file")"
     REQUEST_LOCATION="$(awk 'BEGIN{IGNORECASE=1} /^Location:/ {print $2}' "$header_file" | tr -d '\r' | tail -n 1)"
 

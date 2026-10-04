@@ -362,8 +362,8 @@ function clusterFullyUp(snapshot, config) {
     && snapshot.ops?.code === 200;
 }
 
-function runAction(label, script, args) {
-  return { args, label, script, type: 'run' };
+function runAction(label, script, args, env) {
+  return env ? { args, env, label, script, type: 'run' } : { args, label, script, type: 'run' };
 }
 
 // A dispatched operation takes over the pane so its output is what you watch, and the
@@ -436,7 +436,14 @@ function reduceKey(state, key, ctx) {
       const args = ['--cluster-size', String(config.size)];
       if (state.fresh) args.push('--fresh');
       if (state.build) args.push('--build');
-      const action = runAction(`start cluster${state.fresh ? ' (fresh)' : ''}${state.build ? ' + build' : ''}`, 'start-cluster.sh', args);
+      // The y/N confirmation below is the explicit approval start-cluster's root guard asks for
+      // before a --fresh on the protected live root (OAK_ALLOW_LIVE_ROOT=1, this run only).
+      const action = runAction(
+        `start cluster${state.fresh ? ' (fresh)' : ''}${state.build ? ' + build' : ''}`,
+        'start-cluster.sh',
+        args,
+        state.fresh ? { OAK_ALLOW_LIVE_ROOT: '1' } : undefined,
+      );
       if (state.fresh) {
         return confirm(`Fresh start wipes validator runtime state under ${root} (keystores kept). Continue?`, action, true);
       }
@@ -839,7 +846,7 @@ export async function runMockConsole(options = {}, { repoRoot, env = process.env
     child = spawn('bash', [scriptPath, ...action.args], {
       cwd: config.lifecycleDir,
       detached: true,
-      env: config.childEnv,
+      env: { ...config.childEnv, ...action.env },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     child.stdout.setEncoding('utf8');

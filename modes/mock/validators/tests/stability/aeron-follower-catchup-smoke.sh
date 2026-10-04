@@ -21,6 +21,7 @@ restore_cluster() {
 trap restore_cluster EXIT
 
 CATCHUP_WALLET="${CATCHUP_WALLET:-$(resolve_wallet_for_local_shard "$DEFAULT_CATCHUP_WALLET" 4)}"
+CATCHUP_WALLET="$(test_wallet_for_address "$CATCHUP_WALLET")"  # a key we hold (signed writes)
 
 leader_port=$(find_leader_port || true)
 if [ -z "$leader_port" ]; then

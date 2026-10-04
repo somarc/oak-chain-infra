@@ -18,6 +18,7 @@ LOG_DIR="${LOG_DIR:-$CLUSTER_RUNTIME_ROOT/logs}"
 LAUNCH_RECORD="$PID_DIR/cluster-launch.env"
 STOP_WAIT_SECONDS="${STOP_WAIT_SECONDS:-30}"
 KILL_WAIT_SECONDS="${KILL_WAIT_SECONDS:-10}"
+STOP_ESCALATE="${STOP_ESCALATE:-true}"
 RECORD_KEYS="OAK_CLUSTER_NAME OAK_CLUSTER_SIZE OAK_VALIDATOR_HTTP_BASE_PORT OAK_VALIDATOR_HTTP_PORT_STEP AERON_CLUSTER_BASE_PORT AERON_DIR_BASE AERON_RAMDISK_ROOT OAK_MOCK_EPOCH_DURATION_SECONDS OAK_BLOCKCHAIN_MODE"
 MEMBERSHIP_KEYS="OAK_CLUSTER_SIZE OAK_VALIDATOR_HTTP_BASE_PORT OAK_VALIDATOR_HTTP_PORT_STEP AERON_CLUSTER_BASE_PORT"
 
@@ -37,6 +38,7 @@ Environment:
   CLUSTER_RUNTIME_ROOT  Runtime root (default: $CLUSTER_RUNTIME_ROOT)
   PID_DIR / LOG_DIR     Derived from CLUSTER_RUNTIME_ROOT unless set
   VALIDATOR_SCRIPT      Validator launcher (default: debug/run-validator-node.sh)
+  STOP_ESCALATE         false = a stop that outlives STOP_WAIT_SECONDS fails instead of SIGKILL
 Membership (size, ports, Aeron dirs) is read from \$PID_DIR/cluster-launch.env when present.
 EOF
 }
@@ -235,6 +237,10 @@ stop_member() {
     sleep 1
     waited=$((waited + 1))
   done
+  if is_alive "$pid" && [ "$STOP_ESCALATE" = "false" ]; then
+    echo "❌ validator-$node (pid $pid) did not exit within ${STOP_WAIT_SECONDS}s of SIGTERM (STOP_ESCALATE=false: not killing)"
+    return 1
+  fi
   if is_alive "$pid"; then
     echo "⚠️  validator-$node still running after ${STOP_WAIT_SECONDS}s; sending SIGKILL"
     kill -9 "$pid" 2>/dev/null || true

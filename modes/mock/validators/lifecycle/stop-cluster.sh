@@ -1,6 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
+# shellcheck source=lib/root-guard.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/root-guard.sh"
 CLUSTER_NAME="${OAK_CLUSTER_NAME:-single-cluster}"
 CLUSTER_RUNTIME_ROOT="${CLUSTER_RUNTIME_ROOT:-$HOME/oak-chain}"
 PID_DIR="${PID_DIR:-$CLUSTER_RUNTIME_ROOT/pids}"
@@ -108,15 +110,19 @@ stop_validator_processes() {
   fi
 }
 
+# Stop stays available on every root (it is how the live cluster is stopped), so it is scoped
+# instead of gated: only listeners that belong to this runtime root are killed.
 kill_ports() {
-  for port in "$@"; do
-    local pids
-    pids="$(lsof -ti :"$port" 2>/dev/null || true)"
-    if [ -n "$pids" ]; then
-      echo "• Clearing port $port"
-      echo "$pids" | xargs kill -9 2>/dev/null || true
-    fi
-  done
+  oak_guard_kill_owned_ports "$CLUSTER_RUNTIME_ROOT" "$PID_DIR" "$@"
+}
+
+# A pid file can outlive its process and the pid can be reused: only signal a recorded pid
+# whose command line still matches what the file claims to track.
+pid_matches() {
+  local pid="$1" expect="$2" cmd
+  cmd="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+  case "$cmd" in *"$expect"*) return 0 ;; esac
+  return 1
 }
 
 cleanup_aeron_runtime() {
@@ -215,7 +221,9 @@ for node in "${NODES[@]}"; do
   fi
 
   pid="$(cat "$pid_file")"
-  if is_pid_alive "$pid"; then
+  if is_pid_alive "$pid" && ! pid_matches "$pid" "$CLUSTER_RUNTIME_ROOT/validator-$node"; then
+    echo "• Validator-$node pid file points at pid $pid, which is not validator-$node of $CLUSTER_RUNTIME_ROOT; not signalling it"
+  elif is_pid_alive "$pid"; then
     echo "• Stopping validator-$node (PID $pid)"
     kill "$pid" || true
     sleep 1
@@ -231,7 +239,9 @@ done
 
 if [ -f "$OPS_PROXY_PID_FILE" ]; then
   ops_pid="$(cat "$OPS_PROXY_PID_FILE")"
-  if is_pid_alive "$ops_pid"; then
+  if is_pid_alive "$ops_pid" && ! pid_matches "$ops_pid" "ops-api-worker"; then
+    echo "• OPS proxy pid file points at pid $ops_pid, which is not an ops-api-worker; not signalling it"
+  elif is_pid_alive "$ops_pid"; then
     echo "• Stopping OPS proxy (PID $ops_pid)"
     kill "$ops_pid" || true
     sleep 1

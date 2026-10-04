@@ -24,6 +24,13 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
+# Class D (deletes, GC, and --fresh unless SKIP_CLUSTER_RESTART=true): refuse the protected
+# live root unless OAK_ALLOW_LIVE_ROOT=1, and refuse when the cluster ports or the
+# VALIDATOR_URL port belong to another root.
+source "$LIFECYCLE_DIR/lib/root-guard.sh"
+oak_guard_require_target_from_env "write/delete/GC e2e (class D; start-cluster ${START_CLUSTER_ARGS}, SKIP_CLUSTER_RESTART=${SKIP_CLUSTER_RESTART})" \
+  "$(oak_guard_url_port "$VALIDATOR_URL")" || exit 1
+
 RUN_TS="$(date +%Y%m%d-%H%M%S)"
 RUN_LOG="${LOG_DIR}/e2e-write-delete-gc-${RUN_TS}.log"
 CAPTURE_DIR="${LOG_DIR}/e2e-accepted-${RUN_TS}"

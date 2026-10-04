@@ -36,6 +36,7 @@ restore_cluster() {
 trap 'restore_cluster || true' EXIT
 
 QUORUM_TEST_WALLET="${QUORUM_TEST_WALLET:-$(resolve_wallet_for_local_shard "$DEFAULT_QUORUM_TEST_WALLET" 3)}"
+QUORUM_TEST_WALLET="$(test_wallet_for_address "$QUORUM_TEST_WALLET")"  # a key we hold (signed writes)
 
 record_stopped_node() {
   local node=$1
@@ -88,8 +89,10 @@ submit_body=$(echo "$submit_result" | cut -d'|' -f4-)
 
 log "QUORUM_TEST write http=${submit_code} body=${submit_body}"
 
-if [ "$submit_code" = "200" ] || [ "$submit_code" = "202" ]; then
-  log "QUORUM_TEST expected write rejection without quorum"
+# Only the runtime's explicit no-quorum rejection counts; 000 (transport), 500 or any other
+# error would also be "not 2xx" without proving the quorum gate fired.
+if [ "$submit_code" != "503" ] || [[ "$submit_body" != *"no_quorum"* ]]; then
+  log "QUORUM_TEST expected HTTP 503 with a no_quorum body, got http=${submit_code}"
   exit 1
 fi
 

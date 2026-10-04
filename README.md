@@ -29,6 +29,7 @@ oak-chain ops board
 
 oak-chain mock up -- --fresh --build
 oak-chain mock console
+oak-chain mock campaign run p0-preflight
 oak-chain mock verify smoke
 oak-chain lab 3x2 up -- --fresh
 oak-chain lab verify surfaces-3x2
@@ -76,6 +77,14 @@ oak-chain ops board \
 Colour is enabled automatically in an interactive terminal. Use `--color` to preserve it in one-shot output or `--no-color`/`NO_COLOR=1` for plain text.
 
 The lifecycle scripts remain the recoverable control plane; the TUI is a view over governed telemetry rather than a reimplementation of startup logic. See [`docs/OPS-TUI-ARCHITECTURE.md`](docs/OPS-TUI-ARCHITECTURE.md) for the structured lifecycle-event contract and production roadmap.
+
+### Consensus campaigns
+
+`oak-chain mock campaign run <name>` runs a campaign from `modes/mock/campaigns/`. Each run produces an evidence bundle (manifest, operation ledger, samples, and an assertion ledger with PASS / FAIL / UNKNOWN), following `modes/mock/validators/tests/CONSENSUS-TEST-CHARTER.md`. Start with `p0-preflight`, which is read-only. Writes need `--allow-class B`, and the long-lived `~/oak-chain` root also needs `--allow-live-root`. See [`modes/mock/campaigns/README.md`](modes/mock/campaigns/README.md).
+
+### Valid transactions
+
+Every write and delete that the scripts, load tests and harness send is built by one builder, `oak-chain tx key|write|delete|verify` (`src/tx.mjs`; shell helpers in `modes/mock/lib/oak-tx.sh`). Each one is valid under the runtime's contract ([`modes/mock/TRANSACTION-CONTRACT.md`](modes/mock/TRANSACTION-CONTRACT.md)): it is signed by `walletAddress` (deterministic test keys, listed in `modes/mock/lib/test-wallets.tsv`) over exactly the message, or the `contentPath` for deletes. In mock mode `ethereumTxHash` is the `proposalId`; Sepolia scripts require a real `payWrite` settlement from env. `paymentTier` is no longer sent anywhere: the runtime does not read it, because the tier comes from the settlement proof.
 
 ### Mock cluster console
 

@@ -2,18 +2,21 @@
 set -euo pipefail
 
 OPS_BASE="${OPS_BASE:-http://127.0.0.1:8787}"
-LEADER_BASE="${LEADER_BASE:-http://127.0.0.1:8090}"
+# Empty LEADER_BASE = find the leader before every sample from each node's /health currentRole
+# (never from the OPS overview, whose leader defaults to node 0).
+LEADER_BASE="${LEADER_BASE:-}"
 INTERVAL_SECONDS="${INTERVAL_SECONDS:-5}"
 DURATION_SECONDS="${DURATION_SECONDS:-1800}"
 LOG_DIR="${LOG_DIR:-$HOME/oak-chain/logs}"
 
 mkdir -p "$LOG_DIR"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/suite-lib.sh"
 RUN_TS="$(date +%Y%m%d-%H%M%S)"
 OUT_CSV="${LOG_DIR}/limit-signature-${RUN_TS}.csv"
 
 echo "Capture Limit Signature"
 echo "- OPS base: $OPS_BASE"
-echo "- Leader base: $LEADER_BASE"
+echo "- Leader base: ${LEADER_BASE:-auto (/health currentRole)}"
 echo "- Interval: ${INTERVAL_SECONDS}s"
 echo "- Duration: ${DURATION_SECONDS}s"
 echo "- Output: $OUT_CSV"
@@ -28,8 +31,12 @@ first=1
 while [ "$(date +%s)" -lt "$end_ts" ]; do
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
+  leader_url="${LEADER_BASE:-$(find_leader_url || true)}"
   overview_json="$(curl -s "$OPS_BASE/ops/v1/overview" || true)"
-  queue_json="$(curl -s "$LEADER_BASE/v1/proposals/queue/stats" || true)"
+  queue_json=""
+  if [ -n "$leader_url" ]; then
+    queue_json="$(curl -s "$leader_url/v1/proposals/queue/stats" || true)"
+  fi
 
   if [ -z "$overview_json" ] || [ -z "$queue_json" ]; then
     sleep "$INTERVAL_SECONDS"

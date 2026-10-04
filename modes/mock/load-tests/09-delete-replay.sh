@@ -145,20 +145,13 @@ fail_other=0
 i=0
 while IFS=$'\t' read -r wallet storage_path; do
   i=$((i + 1))
-  tx_hash="$(random_hex 16)"
-  signature="$(random_hex 65)"
   body_file="${TMP_DIR}/resp-${i}.json"
 
-  http_code="$(curl -s -X POST "${VALIDATOR_URL}/v1/propose-delete" \
-    -H "Content-Type: application/x-www-form-urlencoded" \
-    --data-urlencode "walletAddress=${wallet}" \
-    --data-urlencode "signature=${signature}" \
-    --data-urlencode "contentPath=${storage_path}" \
-    --data-urlencode "ethereumTxHash=${tx_hash}" \
-    -o "$body_file" \
-    -w "%{http_code}" 2>/dev/null || echo "000")"
+  # Signed delete (oak-chain tx: signature over contentPath, ethereumTxHash = proposalId);
+  # a follower's 307 is followed with POST kept.
+  http_code="$(submit_delete_proposal "$VALIDATOR_URL" "$wallet" "$storage_path" "$body_file")"
 
-  if [ "$http_code" = "200" ] || [ "$http_code" = "202" ]; then
+  if [[ "$http_code" =~ ^2[0-9][0-9]$ ]]; then
     ok_count=$((ok_count + 1))
   else
     fail_count=$((fail_count + 1))
@@ -188,4 +181,8 @@ fi
 echo "RUN_LOG=${RUN_LOG}"
 if [ -f "$FAIL_LOG" ]; then
   echo "FAIL_LOG=${FAIL_LOG}"
+fi
+if [ "$fail_count" -gt 0 ]; then
+  log_line "$RUN_LOG" "❌ ${fail_count}/${TOTAL_TO_RUN} delete proposal(s) were not accepted"
+  exit 1
 fi

@@ -3,9 +3,16 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MOCK_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-PID_DIR="${PID_DIR:-$HOME/oak-chain/pids}"
-LOG_DIR="${LOG_DIR:-$HOME/oak-chain/logs}"
+CLUSTER_RUNTIME_ROOT="${CLUSTER_RUNTIME_ROOT:-$HOME/oak-chain}"
+PID_DIR="${PID_DIR:-$CLUSTER_RUNTIME_ROOT/pids}"
+LOG_DIR="${LOG_DIR:-$CLUSTER_RUNTIME_ROOT/logs}"
 mkdir -p "$LOG_DIR"
+source "$SCRIPT_DIR/suite-lib.sh"
+source "$MOCK_DIR/validators/lifecycle/lib/root-guard.sh"
+
+# Class C fault (SIGSTOP/SIGCONT of one member): refuse the protected live root unless
+# OAK_ALLOW_LIVE_ROOT=1, and refuse when the cluster ports belong to another root.
+oak_guard_require_target_from_env "unreachable pause draft (class C: SIGSTOP of validator-${REJOIN_NODE_ID:-2})" || exit 1
 
 # Draft scenario:
 # 1) start multi-node ingress load
@@ -29,7 +36,7 @@ if [ ! -x "$LOAD_SCRIPT" ]; then
   exit 1
 fi
 
-node_port=$((8090 + (REJOIN_NODE_ID * 2)))
+node_port=$((${OAK_VALIDATOR_HTTP_BASE_PORT:-8090} + (REJOIN_NODE_ID * ${OAK_VALIDATOR_HTTP_PORT_STEP:-2})))
 node_pid_file="$PID_DIR/validator-${REJOIN_NODE_ID}.pid"
 
 echo "Unreachable Pause/Rejoin Draft"
@@ -75,9 +82,8 @@ echo "Load started pid=$LOAD_PID"
   echo "ts_utc,leader_node,leader_port,target_port,target_up,leader_total_verified,leader_total_finalized,leader_backpressure_pending,target_total_verified,target_total_finalized,target_pending,target_batch_queue,target_backpressure_pending"
   while true; do
     ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    ov="$(curl -s http://127.0.0.1:8787/ops/v1/overview || true)"
-    leader_node="$(echo "$ov" | jq -r '.data.leader.nodeId // 0' 2>/dev/null || echo 0)"
-    leader_port=$((8090 + (leader_node * 2)))
+    # Leader from each node's /health currentRole (the OPS overview's leader is unreliable).
+    read -r leader_node leader_port <<<"$(leader_node_and_port || true)"
 
     leader_q="$(curl -s "http://127.0.0.1:${leader_port}/v1/proposals/queue/stats" || true)"
     target_q="$(curl -s "http://127.0.0.1:${node_port}/v1/proposals/queue/stats" || true)"
@@ -108,6 +114,15 @@ if [ -z "$NODE_PID" ]; then
   echo "ERROR: Could not resolve validator-${REJOIN_NODE_ID} PID from $node_pid_file" | tee -a "$CTRL_LOG"
   exit 1
 fi
+# PID identity (same rule as member.sh): never SIGSTOP a reused pid.
+case "$(ps -p "$NODE_PID" -o command= 2>/dev/null || true)" in
+  *"$CLUSTER_RUNTIME_ROOT/validator-$REJOIN_NODE_ID"*) ;;
+  *)
+    echo "ERROR: pid $NODE_PID from $node_pid_file is not validator-${REJOIN_NODE_ID} of $CLUSTER_RUNTIME_ROOT" | tee -a "$CTRL_LOG"
+    NODE_PID=""
+    exit 1
+    ;;
+esac
 
 echo "Pausing validator-$REJOIN_NODE_ID pid=$NODE_PID (SIGSTOP)" | tee -a "$CTRL_LOG"
 kill -STOP "$NODE_PID"
@@ -119,10 +134,15 @@ echo "Resuming validator-$REJOIN_NODE_ID pid=$NODE_PID (SIGCONT)" | tee -a "$CTR
 kill -CONT "$NODE_PID"
 NODE_PAUSED=false
 
-wait "$LOAD_PID" || true
+load_rc=0
+wait "$LOAD_PID" || load_rc=$?
 kill "$SAMPLE_PID" 2>/dev/null || true
 wait "$SAMPLE_PID" 2>/dev/null || true
 
+if [ "$load_rc" -ne 0 ]; then
+  echo "ERROR: load generator exited $load_rc (see $RUN_LOG)"
+  exit 1
+fi
 echo "SUCCESS: Unreachable pause/rejoin draft complete"
 echo "- run log: $RUN_LOG"
 echo "- sampler csv: $CSV_OUT"
@@ -130,5 +150,5 @@ echo "- control log: $CTRL_LOG"
 echo
 echo "Suggested checks:"
 echo "1) python3 $SCRIPT_DIR/analyze-queue-samples.py --input \"$CSV_OUT\""
-echo "2) rg -n 'CRITICAL: Queue depth|Backpressure timeout|Finalized epoch' $HOME/oak-chain/logs/validator-0.log"
-echo "3) rg -n 'Client session|Aeron Cluster service|Restored|Finalized epoch' $HOME/oak-chain/logs/validator-${REJOIN_NODE_ID}.log"
+echo "2) rg -n 'CRITICAL: Queue depth|Backpressure timeout|Finalized epoch' $CLUSTER_RUNTIME_ROOT/logs/validator-0.log"
+echo "3) rg -n 'Client session|Aeron Cluster service|Restored|Finalized epoch' $CLUSTER_RUNTIME_ROOT/logs/validator-${REJOIN_NODE_ID}.log"

@@ -167,6 +167,7 @@ test('keys map to lifecycle script actions with confirmation for destructive one
     assert.match(result.state.confirm.prompt, /Fresh start wipes validator runtime state under/);
     const confirmed = handleKey({ ...result.state, view: 'member' }, 'y', ctx);
     assert.deepEqual(confirmed.action.args, ['--cluster-size', '3', '--fresh', '--build']);
+    assert.deepEqual(confirmed.action.env, { OAK_ALLOW_LIVE_ROOT: '1' }, 'the confirmed fresh start is the live-root approval');
     assert.equal(confirmed.state.confirm, null);
     assert.equal(confirmed.state.view, 'ops', 'a dispatched start shows its own output');
     assert.equal(confirmed.state.fresh, false, 'fresh is one-shot');

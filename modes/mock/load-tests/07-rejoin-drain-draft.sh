@@ -4,10 +4,23 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MOCK_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 LIFECYCLE_DIR="$MOCK_DIR/validators/lifecycle"
-DEBUG_DIR="$MOCK_DIR/validators/debug"
-PID_DIR="${PID_DIR:-$HOME/oak-chain/pids}"
-LOG_DIR="${LOG_DIR:-$HOME/oak-chain/logs}"
+CLUSTER_RUNTIME_ROOT="${CLUSTER_RUNTIME_ROOT:-$HOME/oak-chain}"
+PID_DIR="${PID_DIR:-$CLUSTER_RUNTIME_ROOT/pids}"
+LOG_DIR="${LOG_DIR:-$CLUSTER_RUNTIME_ROOT/logs}"
 mkdir -p "$LOG_DIR"
+source "$SCRIPT_DIR/suite-lib.sh"
+source "$LIFECYCLE_DIR/lib/root-guard.sh"
+
+# Class C fault (SIGKILL + restart of one member): refuse the protected live root unless
+# OAK_ALLOW_LIVE_ROOT=1, and refuse when the cluster ports belong to another root.
+oak_guard_require_target_from_env "rejoin drain draft (class C: SIGKILL + restart of validator-${REJOIN_NODE_ID:-2})" || exit 1
+
+# member.sh checks PID identity before signalling and keeps the restart's membership in line
+# with the launch record. Validator logs stay in the runtime root, not the load LOG_DIR.
+member() {
+  CLUSTER_RUNTIME_ROOT="$CLUSTER_RUNTIME_ROOT" PID_DIR="$PID_DIR" LOG_DIR="$CLUSTER_RUNTIME_ROOT/logs" \
+    "$LIFECYCLE_DIR/member.sh" "$@"
+}
 
 # Draft scenario:
 # 1) start multi-node ingress load
@@ -33,8 +46,7 @@ if [ ! -x "$LOAD_SCRIPT" ]; then
   exit 1
 fi
 
-node_port=$((8090 + (REJOIN_NODE_ID * 2)))
-node_pid_file="$PID_DIR/validator-${REJOIN_NODE_ID}.pid"
+node_port=$((${OAK_VALIDATOR_HTTP_BASE_PORT:-8090} + (REJOIN_NODE_ID * ${OAK_VALIDATOR_HTTP_PORT_STEP:-2})))
 
 echo "Rejoin Drain Draft"
 echo "- Rejoin node-id: $REJOIN_NODE_ID (port $node_port)"
@@ -109,9 +121,8 @@ echo "• Load started pid=$LOAD_PID"
   echo "ts_utc,leader_node,leader_port,target_port,leader_total_verified,leader_total_finalized,leader_backpressure_pending,target_total_verified,target_total_finalized,target_pending,target_batch_queue,target_backpressure_pending"
   while true; do
     ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    ov="$(curl -s http://127.0.0.1:8787/ops/v1/overview || true)"
-    leader_node="$(echo "$ov" | jq -r '.data.leader.nodeId // 0' 2>/dev/null || echo 0)"
-    leader_port=$((8090 + (leader_node * 2)))
+    # Leader from each node's /health currentRole (the OPS overview's leader is unreliable).
+    read -r leader_node leader_port <<<"$(leader_node_and_port || true)"
 
     leader_q="$(curl -s "http://127.0.0.1:${leader_port}/v1/proposals/queue/stats" || true)"
     target_q="$(curl -s "http://127.0.0.1:${node_port}/v1/proposals/queue/stats" || true)"
@@ -133,25 +144,27 @@ echo "• Sampler started pid=$SAMPLE_PID"
 
 sleep "$WARMUP_SECONDS"
 
-if [ -f "$node_pid_file" ]; then
-  node_pid="$(cat "$node_pid_file" || true)"
-  if [ -n "$node_pid" ]; then
-    echo "• Killing validator-$REJOIN_NODE_ID pid=$node_pid"
-    kill -9 "$node_pid" || true
-    if wait_for_node_down "$node_port" "$DOWN_WAIT_TIMEOUT_SECONDS"; then
-      echo "• Confirmed validator-$REJOIN_NODE_ID is down on :$node_port"
-    else
-      echo "❌ validator-$REJOIN_NODE_ID did not go down on :$node_port within ${DOWN_WAIT_TIMEOUT_SECONDS}s"
-      exit 1
-    fi
-  fi
+echo "• Killing validator-$REJOIN_NODE_ID via member.sh (SIGKILL)"
+if ! member kill "$REJOIN_NODE_ID"; then
+  echo "❌ member.sh could not kill validator-$REJOIN_NODE_ID"
+  exit 1
+fi
+if wait_for_node_down "$node_port" "$DOWN_WAIT_TIMEOUT_SECONDS"; then
+  echo "• Confirmed validator-$REJOIN_NODE_ID is down on :$node_port"
+else
+  echo "❌ validator-$REJOIN_NODE_ID did not go down on :$node_port within ${DOWN_WAIT_TIMEOUT_SECONDS}s"
+  exit 1
 fi
 
 sleep "$DOWN_SECONDS"
 
-echo "• Restarting validator-$REJOIN_NODE_ID"
-nohup "$DEBUG_DIR/run-validator-node.sh" "$REJOIN_NODE_ID" > "$RESTART_LOG" 2>&1 &
-echo "  restart log: $RESTART_LOG"
+echo "• Restarting validator-$REJOIN_NODE_ID via member.sh"
+if ! member start "$REJOIN_NODE_ID" > "$RESTART_LOG" 2>&1; then
+  cat "$RESTART_LOG"
+  echo "❌ member.sh could not restart validator-$REJOIN_NODE_ID"
+  exit 1
+fi
+echo "  restart log: $RESTART_LOG (launcher output: $CLUSTER_RUNTIME_ROOT/logs/start-validator-${REJOIN_NODE_ID}.log)"
 if wait_for_node_up "$node_port" "$UP_WAIT_TIMEOUT_SECONDS"; then
   echo "• Confirmed validator-$REJOIN_NODE_ID is back up on :$node_port"
 else
@@ -160,15 +173,20 @@ else
   exit 1
 fi
 
-wait "$LOAD_PID" || true
+load_rc=0
+wait "$LOAD_PID" || load_rc=$?
 kill "$SAMPLE_PID" 2>/dev/null || true
 wait "$SAMPLE_PID" 2>/dev/null || true
 
+if [ "$load_rc" -ne 0 ]; then
+  echo "❌ Load generator exited $load_rc (see $RUN_LOG)"
+  exit 1
+fi
 echo "✅ Rejoin drain draft complete"
 echo "- run log: $RUN_LOG"
 echo "- sampler csv: $CSV_OUT"
 echo "- restart log: $RESTART_LOG"
 echo
 echo "Suggested checks:"
-echo "1) rg -n 'Restored .* persisted proposals|QUEUE_TUNING_SOURCE|Epoch finalization check' $HOME/oak-chain/logs/validator-${REJOIN_NODE_ID}.log"
+echo "1) rg -n 'Restored .* persisted proposals|QUEUE_TUNING_SOURCE|Epoch finalization check' $CLUSTER_RUNTIME_ROOT/logs/validator-${REJOIN_NODE_ID}.log"
 echo "2) python3 $SCRIPT_DIR/analyze-queue-samples.py --input \"$CSV_OUT\""

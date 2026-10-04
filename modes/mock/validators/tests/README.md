@@ -32,6 +32,17 @@ evidence contract.
 - `monitoring/`
   - Periodic staircase watcher and failure-investigation capture.
 
+## Transactions And Wallets
+
+Every write and delete these tests send is valid under the runtime's contract
+(`../../TRANSACTION-CONTRACT.md`), built by the shared builder `oak-chain tx`
+through `../../lib/oak-tx.sh`: signed by `walletAddress` over exactly the
+message (or `contentPath` for deletes), `ethereumTxHash = proposalId` (mock
+settlement), no `paymentTier`. Wallets must be test keys we hold
+(`../../lib/test-wallets.tsv`). A wallet address passed in env (for example
+`WALLET_A=0x1100…0`) selects the held test key with the same first byte, so it
+still routes to the same shard; roles therefore use distinct first bytes.
+
 ## Recommended Gates
 
 - `surfaces/proposal-surfaces-3x2.sh`

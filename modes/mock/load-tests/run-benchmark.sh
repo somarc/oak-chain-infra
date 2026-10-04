@@ -111,7 +111,8 @@ else
   LOAD_MODE="multi-node"
 fi
 
-TEST_DURATION_FROM_SCRIPT="$(awk -F= '/^TEST_DURATION_SECONDS=/{gsub(/"/,"",$2); print $2; exit}' "$LOAD_SCRIPT")"
+# Profiles declare TEST_DURATION_SECONDS="${TEST_DURATION_SECONDS:-N}" so env overrides apply.
+TEST_DURATION_FROM_SCRIPT="$(resolve_name_setting "$(awk -F= '/^TEST_DURATION_SECONDS=/{gsub(/"/,"",$2); print $2; exit}' "$LOAD_SCRIPT")" TEST_DURATION_SECONDS)"
 if [[ "$TEST_DURATION_FROM_SCRIPT" =~ ^[0-9]+$ ]]; then
   TARGET_DURATION_SECONDS="$TEST_DURATION_FROM_SCRIPT"
 fi
@@ -179,10 +180,18 @@ SAMPLER_PID=$!
 
 echo "- Queue sampler PID: $SAMPLER_PID"
 
+# The load engine now exits non-zero on client failure or an error-budget breach. Keep scoring
+# (the report is still useful evidence), then fail the benchmark if either side failed.
+set +e
 (
   cd "$(dirname "$LOAD_SCRIPT")"
   "./$(basename "$LOAD_SCRIPT")"
 ) | tee "$RUN_LOG"
+LOAD_RC=${PIPESTATUS[0]}
+set -e
+if [ "$LOAD_RC" -ne 0 ]; then
+  echo "❌ Load script exited $LOAD_RC (failed client or error budget breach; see LOAD_SUMMARY above)"
+fi
 
 wait "$SAMPLER_PID" 2>/dev/null || true
 
@@ -199,7 +208,10 @@ collect_paths() {
   while IFS= read -r line; do
     [ -n "$line" ] && collected+=("$line")
   done < <("$@")
-  eval "$__resultvar=(\"\${collected[@]}\")"
+  # bash 3.2 + set -u: expanding an empty array is fatal, and that exit reports status 0.
+  if [ "${#collected[@]}" -gt 0 ]; then
+    eval "$__resultvar=(\"\${collected[@]}\")"
+  fi
 }
 
 if [ "$LOAD_MODE" = "single-node" ]; then
@@ -265,4 +277,8 @@ else
   echo "❌ Benchmark gate FAIL (exit code $RC)"
 fi
 
+if [ "$RC" -eq 0 ] && [ "$LOAD_RC" -ne 0 ]; then
+  echo "❌ Benchmark FAIL: load script exited $LOAD_RC"
+  exit "$LOAD_RC"
+fi
 exit "$RC"

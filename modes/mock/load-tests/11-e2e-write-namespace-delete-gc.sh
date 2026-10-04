@@ -24,6 +24,13 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
+# Class D (namespace delete, GC, and --fresh when no cluster is running): refuse the protected
+# live root unless OAK_ALLOW_LIVE_ROOT=1, and refuse when the cluster ports or the
+# VALIDATOR_URL port belong to another root.
+source "$LIFECYCLE_DIR/lib/root-guard.sh"
+oak_guard_require_target_from_env "write/namespace-delete/GC e2e (class D; start-cluster ${START_CLUSTER_ARGS}, SKIP_CLUSTER_RESTART=${SKIP_CLUSTER_RESTART})" \
+  "$(oak_guard_url_port "$VALIDATOR_URL")" || exit 1
+
 RUN_TS="$(date +%Y%m%d-%H%M%S)"
 RUN_LOG="${LOG_DIR}/e2e-write-namespace-delete-gc-${RUN_TS}.log"
 CAPTURE_DIR="${LOG_DIR}/e2e-namespace-accepted-${RUN_TS}"
@@ -220,17 +227,18 @@ run_namespace_delete_phase() {
   log_line "$RUN_LOG" "Namespace delete target: ${target_path}"
   log_line "$RUN_LOG" "Namespace delete wallet: ${wallet}"
 
-  local tx_hash signature delete_resp
-  tx_hash="$(random_hex 16)"
-  signature="$(random_hex 65)"
-  delete_resp="$(curl -s -X POST "${VALIDATOR_URL}/v1/propose-delete" \
-    -H "Content-Type: application/x-www-form-urlencoded" \
-    --data-urlencode "walletAddress=${wallet}" \
-    --data-urlencode "signature=${signature}" \
-    --data-urlencode "contentPath=${target_path}" \
-    --data-urlencode "ethereumTxHash=${tx_hash}")"
+  local body_file http_code delete_resp
+  body_file="$(mktemp "${TMPDIR:-/tmp}/oak-namespace-delete.XXXXXX")"
+  # Signed delete by the wallet's test key (oak-chain tx); a follower's 307 is followed with POST kept.
+  http_code="$(submit_delete_proposal "$VALIDATOR_URL" "$wallet" "$target_path" "$body_file")"
+  delete_resp="$(cat "$body_file" 2>/dev/null || true)"
+  rm -f "$body_file"
 
-  log_line "$RUN_LOG" "Namespace delete response: $(printf '%s' "$delete_resp" | jq -c '.' 2>/dev/null || printf '%s' "$delete_resp")"
+  log_line "$RUN_LOG" "Namespace delete response (HTTP ${http_code}): $(printf '%s' "$delete_resp" | jq -c '.' 2>/dev/null || printf '%s' "$delete_resp")"
+  if [[ ! "$http_code" =~ ^2[0-9][0-9]$ ]]; then
+    log_line "$RUN_LOG" "ERROR: namespace delete was not accepted (HTTP ${http_code})"
+    return 1
+  fi
 }
 
 run_gc_phase() {

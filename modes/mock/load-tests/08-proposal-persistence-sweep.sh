@@ -6,6 +6,11 @@ MOCK_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 LIFECYCLE_DIR="$MOCK_DIR/validators/lifecycle"
 LOG_DIR="${LOG_DIR:-$HOME/oak-chain/logs}"
 mkdir -p "$LOG_DIR"
+source "$LIFECYCLE_DIR/lib/root-guard.sh"
+
+# Class D: every case restarts the cluster with start-cluster.sh --fresh. Refuse the protected
+# live root unless OAK_ALLOW_LIVE_ROOT=1, and refuse when the ports belong to another root.
+oak_guard_require_target_from_env "persistence sweep (class D: start-cluster --fresh per case)" || exit 1
 
 # Sweep defaults tuned for iterative benchmarking (not overnight soak).
 TARGET_DURATION_SECONDS="${TARGET_DURATION_SECONDS:-600}"

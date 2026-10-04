@@ -15,12 +15,11 @@ DEFAULT_LEADER_TEST_WALLET="0x2222222222222222222222222222222222222222"
 STOPPED_NODES=()
 
 resolve_failover_wallets() {
-  if [ -n "$FOLLOWER_TEST_WALLET" ] && [ -n "$LEADER_TEST_WALLET" ]; then
-    return 0
-  fi
-
   FOLLOWER_TEST_WALLET="${FOLLOWER_TEST_WALLET:-$(resolve_wallet_for_local_shard "$DEFAULT_FOLLOWER_TEST_WALLET" 0)}"
   LEADER_TEST_WALLET="${LEADER_TEST_WALLET:-$(resolve_wallet_for_local_shard "$DEFAULT_LEADER_TEST_WALLET" 1)}"
+  # Writes must be signed by a key we hold: a supplied address selects the test key for its shard byte.
+  FOLLOWER_TEST_WALLET="$(test_wallet_for_address "$FOLLOWER_TEST_WALLET")"
+  LEADER_TEST_WALLET="$(test_wallet_for_address "$LEADER_TEST_WALLET")"
 }
 
 restore_cluster() {

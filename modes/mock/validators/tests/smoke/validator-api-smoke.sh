@@ -10,6 +10,14 @@ AUTH_TOKEN="${OAK_VALIDATOR_AUTH_TOKEN:-}"
 LOG_DIR="${LOG_DIR:-$HOME/oak-chain/logs}"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 LOG_FILE="${LOG_DIR}/validator-api-smoke-${TIMESTAMP}.log"
+# STRICT (default): any endpoint failure or missing required field makes the run exit 1.
+# SOFT=1 restores the old report-only behaviour (always exit 0).
+SOFT="${SOFT:-0}"
+STRICT="${STRICT:-true}"
+if [ "$SOFT" = "1" ]; then
+  STRICT=false
+fi
+FAILURES=0
 
 if [ "$CLUSTER_SIZE" = "5" ]; then
   NODE_COUNT=5
@@ -30,6 +38,12 @@ fi
 
 log() {
   echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"
+}
+
+# Records one failed check (endpoint error, parse error or missing field).
+fail_check() {
+  FAILURES=$((FAILURES + 1))
+  log "❌ $*"
 }
 
 fetch() {
@@ -77,12 +91,12 @@ require_field() {
   local value
   value=$(extract_field "$json" "$field")
   if [[ "$value" == "__PARSE_ERROR__"* ]]; then
-    log "⚠️  ${label}: json parse error ${value#__PARSE_ERROR__:}"
-    log "⚠️  ${label}: body snippet: $(echo "$json" | head -c 200)"
+    fail_check "${label}: json parse error ${value#__PARSE_ERROR__:}"
+    log "   ${label}: body snippet: $(echo "$json" | head -c 200)"
     return 0
   fi
   if [ -z "$value" ]; then
-    log "⚠️  ${label}: missing field '${field}'"
+    fail_check "${label}: missing field '${field}'"
   else
     log "✅ ${label}: ${field}=${value}"
   fi
@@ -95,7 +109,7 @@ check_aeron_cluster_state() {
   local code="${resp%%::*}"
   local json="${resp#*::}"
   if [ "$code" != "200" ]; then
-    log "⚠️  cluster-state HTTP ${code}: $(echo "$json" | head -c 200)"
+    fail_check "cluster-state HTTP ${code}: $(echo "$json" | head -c 200)"
     return 0
   fi
   require_field "$json" "role" "cluster-state"
@@ -110,7 +124,7 @@ check_aeron_raft_metrics() {
   local code="${resp%%::*}"
   local json="${resp#*::}"
   if [ "$code" != "200" ]; then
-    log "⚠️  raft-metrics HTTP ${code}: $(echo "$json" | head -c 200)"
+    fail_check "raft-metrics HTTP ${code}: $(echo "$json" | head -c 200)"
     return 0
   fi
   require_field "$json" "replicationMetrics" "raft-metrics"
@@ -125,7 +139,7 @@ check_aeron_leadership_history() {
   local code="${resp%%::*}"
   local json="${resp#*::}"
   if [ "$code" != "200" ]; then
-    log "⚠️  leadership-history HTTP ${code}: $(echo "$json" | head -c 200)"
+    fail_check "leadership-history HTTP ${code}: $(echo "$json" | head -c 200)"
     return 0
   fi
   require_field "$json" "history" "leadership-history"
@@ -138,7 +152,7 @@ check_aeron_node_status() {
   local code="${resp%%::*}"
   local json="${resp#*::}"
   if [ "$code" != "200" ]; then
-    log "⚠️  node-status HTTP ${code}: $(echo "$json" | head -c 200)"
+    fail_check "node-status HTTP ${code}: $(echo "$json" | head -c 200)"
     return 0
   fi
   require_field "$json" "role" "node-status"
@@ -152,19 +166,11 @@ check_aeron_replication_lag() {
   local code="${resp%%::*}"
   local json="${resp#*::}"
   if [ "$code" != "200" ]; then
-    log "⚠️  replication-lag HTTP ${code}: $(echo "$json" | head -c 200)"
+    fail_check "replication-lag HTTP ${code}: $(echo "$json" | head -c 200)"
     return 0
   fi
   local lag
-  lag=$(echo "$json" | python3 - <<PY
-import json,sys
-try:
-  data=json.load(sys.stdin)
-  print(data.get('replicationLag',''))
-except Exception:
-  print('')
-PY
-)
+  lag=$(extract_field "$json" "replicationLag")
   if [ "$lag" = "-1" ]; then
     log "⚠️  replication-lag: leader_log_position_unknown"
   else
@@ -179,7 +185,7 @@ check_consensus_status() {
   local code="${resp%%::*}"
   local json="${resp#*::}"
   if [ "$code" != "200" ]; then
-    log "⚠️  consensus-status HTTP ${code}: $(echo "$json" | head -c 200)"
+    fail_check "consensus-status HTTP ${code}: $(echo "$json" | head -c 200)"
     return 0
   fi
   require_field "$json" "currentRole" "consensus-status"
@@ -194,7 +200,7 @@ check_blockchain_config() {
   local code="${resp%%::*}"
   local json="${resp#*::}"
   if [ "$code" != "200" ]; then
-    log "⚠️  blockchain-config HTTP ${code}: $(echo "$json" | head -c 200)"
+    fail_check "blockchain-config HTTP ${code}: $(echo "$json" | head -c 200)"
     return 0
   fi
   require_field "$json" "mode" "blockchain-config"
@@ -209,7 +215,7 @@ check_proposals_pending() {
   local code="${resp%%::*}"
   local json="${resp#*::}"
   if [ "$code" != "200" ]; then
-    log "⚠️  proposals-pending HTTP ${code}: $(echo "$json" | head -c 200)"
+    fail_check "proposals-pending HTTP ${code}: $(echo "$json" | head -c 200)"
     return 0
   fi
   require_field "$json" "pendingCount" "proposals-pending"
@@ -222,7 +228,7 @@ check_queue_stats() {
   local code="${resp%%::*}"
   local json="${resp#*::}"
   if [ "$code" != "200" ]; then
-    log "⚠️  queue-stats HTTP ${code}: $(echo "$json" | head -c 200)"
+    fail_check "queue-stats HTTP ${code}: $(echo "$json" | head -c 200)"
     return 0
   fi
   require_field "$json" "mempoolSize" "queue-stats"
@@ -237,7 +243,7 @@ check_health() {
   local code="${resp%%::*}"
   local json="${resp#*::}"
   if [ "$code" != "200" ]; then
-    log "⚠️  health HTTP ${code}: $(echo "$json" | head -c 200)"
+    fail_check "health HTTP ${code}: $(echo "$json" | head -c 200)"
     return 0
   fi
   require_field "$json" "status" "health"
@@ -265,4 +271,12 @@ for port in "${NODES[@]}"; do
   echo "" | tee -a "$LOG_FILE"
 done
 
-log "✅ Smoke test complete (soft validation; no hard failures)"
+if [ "$FAILURES" -eq 0 ]; then
+  log "✅ Smoke test complete: all endpoints and required fields present"
+  exit 0
+fi
+if [ "$STRICT" = "true" ]; then
+  log "❌ Smoke test failed: ${FAILURES} check(s) failed (SOFT=1 for report-only mode)"
+  exit 1
+fi
+log "⚠️  Smoke test complete with ${FAILURES} failed check(s) (soft mode; exit 0)"

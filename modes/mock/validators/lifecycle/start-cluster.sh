@@ -2,6 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/root-guard.sh
+source "$SCRIPT_DIR/lib/root-guard.sh"
 export OAK_BLOCKCHAIN_MODE="${OAK_BLOCKCHAIN_MODE:-mock}"
 export OAK_RATE_LIMIT_ENABLED="${OAK_RATE_LIMIT_ENABLED:-false}"
 export OAK_CLUSTER_ENV="${OAK_CLUSTER_ENV:-test}"
@@ -180,6 +182,13 @@ for node in "${NODES[@]}"; do
   HTTP_PORTS+=($((VALIDATOR_HTTP_BASE_PORT + (node * VALIDATOR_HTTP_PORT_STEP))))
 done
 
+# --fresh is risk class D: it signals, wipes and sweeps ports. Refuse it on the protected live
+# root (unless OAK_ALLOW_LIVE_ROOT=1) and whenever a cluster port belongs to another root.
+if [ "$FRESH" = "true" ] && ! oak_guard_require_fresh_safe "$CLUSTER_RUNTIME_ROOT" "$PID_DIR" \
+    "$CLUSTER_SIZE" "$VALIDATOR_HTTP_BASE_PORT" "$VALIDATOR_HTTP_PORT_STEP" "$AERON_CLUSTER_BASE_PORT"; then
+  exit 1
+fi
+
 find_validator_processes() {
   local pattern
   if [ -n "$VALIDATOR_PROCESS_MATCH" ]; then
@@ -334,15 +343,9 @@ wait_for_pid_file_value() {
   return 1
 }
 
+# Only listeners that belong to this runtime root are killed; others are reported and skipped.
 kill_ports() {
-  for port in "$@"; do
-    local pids
-    pids="$(lsof -ti :"$port" 2>/dev/null || true)"
-    if [ -n "$pids" ]; then
-      echo "• Clearing port $port"
-      echo "$pids" | xargs kill -9 2>/dev/null || true
-    fi
-  done
+  oak_guard_kill_owned_ports "$CLUSTER_RUNTIME_ROOT" "$PID_DIR" "$@"
 }
 
 launch_detached_process() {

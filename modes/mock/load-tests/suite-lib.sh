@@ -9,68 +9,18 @@ HTTP_REQUEST_TIMEOUT_SECONDS="${HTTP_REQUEST_TIMEOUT_SECONDS:-30}"
 
 mkdir -p "$LOG_DIR"
 
-WALLETS=(
-    "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb0"
-    "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed"
-    "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359"
-    "0xdbF03B407c01E7cD3CBea99509d93f8DDDC8C6FB"
-    "0xD1220A0cf47c7B9Be7A2E6BA89F429762e7b9aDb"
-    "0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199"
-    "0xdD870fA1b7C4700F2BD7f44238821C26f7392148"
-    "0x583031D1113aD414F02576BD6afaBfb302140225"
-    "0x4B0897b0513fdC7C541B6d9D7E929C4e5364D2dB"
-    "0x14723A09ACff6D2A60DcdF7aA4AFf308FDDC160C"
-    "0xCA35b7d915458EF540aDe6068dFe2F44E8fa733c"
-    "0x4826533B4897376654Bb4d4AD88B7faFD0C98528"
-    "0x617F2E2fD72FD9D5503197092aC168c91465E7f2"
-    "0x17F6AD8Ef982297579C203069C1DbfFE4348c372"
-    "0x5c6B0f7Bf3E7ce046039Bd8FABdfD3f9F5021678"
-    "0x03C6FcED478cBbC9a4FAB34eF9f40767739D1Ff7"
-    "0x1aE0EA34a72D944a8C7603FfB3eC30a6669E454C"
-    "0x0A098Eda01Ce92ff4A4CCb7A4fFFb5A43EBC70DC"
-    "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf"
-    "0x2B5AD5c4795c026514f8317c7a215E218DcCD6cF"
-    "0x9B9cE5c49A15b9a0c8f4bB7c0D7e9B8b6f7A1B2c"
-    "0xA3bC7D9e0F1a2B3c4D5e6F708192A3b4C5d6E7f8"
-    "0xB4cD8E1f2A3b4C5d6E7f8091A2b3C4d5E6F7a8B9"
-    "0xC5dE9F2a3B4c5D6e7F8091A2b3C4d5E6F7a8B9c0"
-    "0xD6eF0A3b4C5d6E7f8091A2b3C4d5E6F7a8B9c0D1"
-    "0xE7f01B4c5D6e7F8091A2b3C4d5E6F7a8B9c0D1e2"
-    "0xF8012C5d6E7f8091A2b3C4d5E6F7a8B9c0D1e2F3"
-    "0x0123dE6f708192A3b4C5d6E7f8091A2b3C4d5E6F"
-    "0x13579Bdf2468ACE02468aCe13579bDF2468ACe02"
-    "0x2468ACE02468aCe13579bDF2468ACe02468aCe13"
-    "0x1000000000000000000000000000000000000001"
-    "0x1000000000000000000000000000000000000002"
-    "0x1000000000000000000000000000000000000003"
-    "0x1000000000000000000000000000000000000004"
-    "0x1000000000000000000000000000000000000005"
-    "0x1000000000000000000000000000000000000006"
-    "0x1000000000000000000000000000000000000007"
-    "0x1000000000000000000000000000000000000008"
-    "0x1000000000000000000000000000000000000009"
-    "0x100000000000000000000000000000000000000A"
-    "0x100000000000000000000000000000000000000B"
-    "0x100000000000000000000000000000000000000C"
-    "0x100000000000000000000000000000000000000D"
-    "0x100000000000000000000000000000000000000E"
-    "0x100000000000000000000000000000000000000F"
-    "0x1000000000000000000000000000000000000010"
-    "0x1000000000000000000000000000000000000011"
-    "0x1000000000000000000000000000000000000012"
-    "0x1000000000000000000000000000000000000013"
-    "0x1000000000000000000000000000000000000014"
-    "0x1000000000000000000000000000000000000015"
-    "0x1000000000000000000000000000000000000016"
-    "0x1000000000000000000000000000000000000017"
-    "0x1000000000000000000000000000000000000018"
-    "0x1000000000000000000000000000000000000019"
-    "0x100000000000000000000000000000000000001A"
-    "0x100000000000000000000000000000000000001B"
-    "0x100000000000000000000000000000000000001C"
-    "0x100000000000000000000000000000000000001D"
-    "0x100000000000000000000000000000000000001E"
-)
+# Transactions come from the shared conformant builder `oak-chain tx` (modes/mock/lib/oak-tx.sh,
+# contract in modes/mock/TRANSACTION-CONTRACT.md). Client N signs with test key N
+# (`oak-chain tx key --index N`), so WALLETS[N-1] is a wallet we hold the key for.
+# shellcheck source=../lib/oak-tx.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" && pwd)/oak-tx.sh"
+WALLETS=()
+while read -r _wallet_role _wallet_address _wallet_index; do
+    case "$_wallet_role" in
+        client-*) WALLETS+=("$_wallet_address") ;;
+    esac
+done < "$OAK_TX_WALLETS_FILE"
+unset _wallet_role _wallet_address _wallet_index
 
 BINARY_FILES=()
 
@@ -95,11 +45,6 @@ log_line() {
     echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$log_file"
 }
 
-random_hex() {
-    local bytes=$1
-    echo "0x$(openssl rand -hex "$bytes")"
-}
-
 random_int() {
     local min=$1
     local max=$2
@@ -114,21 +59,6 @@ pick_binary_file() {
     fi
     local idx=$((RANDOM % count))
     echo "${BINARY_FILES[$idx]}"
-}
-
-select_payment_tier() {
-    local standard_weight="${TIER_STANDARD_WEIGHT:-85}"
-    local express_weight="${TIER_EXPRESS_WEIGHT:-12}"
-    local priority_weight="${TIER_PRIORITY_WEIGHT:-3}"
-    local total=$((standard_weight + express_weight + priority_weight))
-    local rand=$((RANDOM % total))
-    if [ "$rand" -lt "$standard_weight" ]; then
-        echo "standard"
-    elif [ "$rand" -lt $((standard_weight + express_weight)) ]; then
-        echo "express"
-    else
-        echo "priority"
-    fi
 }
 
 curl_follow_redirects() {
@@ -153,6 +83,65 @@ curl_http_code() {
     else
         printf '000'
     fi
+}
+
+# Leader discovery from each validator's own /health currentRole. Never use the OPS overview's
+# leader: it defaults to node 0 and is wrong whenever another node leads. Prints the leader's
+# base URL; returns 1 when no node reports LEADER. Geometry comes from the usual env vars.
+find_leader_url() {
+    local host="${LEADER_DISCOVERY_HOST:-http://127.0.0.1}"
+    local size="${OAK_CLUSTER_SIZE:-3}"
+    local base="${OAK_VALIDATOR_HTTP_BASE_PORT:-8090}"
+    local step="${OAK_VALIDATOR_HTTP_PORT_STEP:-2}"
+    local node=0 port role
+    while [ "$node" -lt "$size" ]; do
+        port=$((base + node * step))
+        role=$(curl -s --max-time 2 "${host}:${port}/health" 2>/dev/null | python3 -c 'import json,sys
+try:
+    print(json.load(sys.stdin).get("currentRole") or "")
+except Exception:
+    print("")' 2>/dev/null || true)
+        if [ "$role" = "LEADER" ]; then
+            printf '%s:%s\n' "$host" "$port"
+            return 0
+        fi
+        node=$((node + 1))
+    done
+    return 1
+}
+
+# "node port" of the current leader (find_leader_url), or "-1 0" and status 1 when none.
+leader_node_and_port() {
+    local url port
+    if ! url="$(find_leader_url)"; then
+        echo "-1 0"
+        return 1
+    fi
+    port="${url##*:}"
+    echo "$(( (port - ${OAK_VALIDATOR_HTTP_BASE_PORT:-8090}) / ${OAK_VALIDATOR_HTTP_PORT_STEP:-2} )) ${port}"
+}
+
+# One conformant delete proposal (modes/mock/TRANSACTION-CONTRACT.md) from `oak-chain tx delete`:
+# a fresh 0x+64-hex proposalId, ethereumTxHash = proposalId (mock settlement), and a signature by
+# the wallet's test key over exactly contentPath. The wallet must be one we hold (WALLETS or a
+# shard-prefix test wallet); otherwise nothing is sent, the reason goes to out_file and stderr,
+# and the code is 000, so replay loops count it as a failure and continue. Follows a
+# follower's 307 to the leader; curl keeps POST and the body on 307/308 (and on 301/302/303
+# via --post30x in curl_follow_redirects). Prints the final HTTP code; body goes to out_file.
+submit_delete_proposal() {
+    local base_url="$1"
+    local wallet="$2"
+    local content_path="$3"
+    local out_file="$4"
+    local form
+    if ! form="$(oak_tx_as "$wallet" delete --content-path "$content_path")"; then
+        printf '{"error":"no test key held for wallet %s; cannot sign the delete"}\n' "$wallet" > "$out_file"
+        printf '000'
+        return 0
+    fi
+    curl_http_code "$out_file" -s "${base_url}/v1/propose-delete" \
+        -H "Content-Type: application/x-www-form-urlencoded" \
+        --data-binary "$form"
 }
 
 resolve_current_leader_url() {
@@ -190,11 +179,17 @@ register_client() {
     local response_file
     response_file=$(mktemp "${TMPDIR:-/tmp}/oak-register-client.XXXXXX")
 
+    # The runtime does not read a signature here (RegistrationHandler: "signature: Optional ... for
+    # future verification"), so registration stays unsigned. It persists clientId -> wallet and
+    # answers 409 when a clientId comes back with another wallet, so the clientId carries the
+    # wallet's first bytes: a cluster that registered client-N with a pre-test-key wallet still
+    # accepts the test-key wallet.
+    local registered_id="client-${client_id}-${wallet:2:8}"
     local curl_args=(
         -s -X POST "${register_url}/v1/register-client"
         -H "Content-Type: application/x-www-form-urlencoded"
-        -d "clientId=client-${client_id}"
-        -d "clientUrl=http://client-${client_id}.local"
+        -d "clientId=${registered_id}"
+        -d "clientUrl=http://${registered_id}.local"
         -d "walletAddress=${wallet}"
     )
     if [ -n "$client_type" ]; then
@@ -204,7 +199,7 @@ register_client() {
     local http_code
     http_code=$(curl_http_code "$response_file" "${curl_args[@]}")
     if [[ ! "$http_code" =~ ^2[0-9][0-9]$ ]]; then
-        echo "ERROR: client registration failed for client-${client_id} at ${register_url} (HTTP ${http_code}): $(cat "$response_file" 2>/dev/null)" >&2
+        echo "ERROR: client registration failed for ${registered_id} at ${register_url} (HTTP ${http_code}): $(cat "$response_file" 2>/dev/null)" >&2
         rm -f "$response_file"
         return 1
     fi

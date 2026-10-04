@@ -7,6 +7,16 @@
 # - Verifies IPFS CID storage
 # - Checks binary retrieval
 # - Validates IPFS pinning
+#
+# Chain-backed mode: the write must carry a REAL settlement. Nothing here is invented.
+#   PROPOSAL_ID           the 0x+64-hex id you passed to ValidatorPaymentV5.payWrite(proposalId, flags)
+#   TX_HASH               the confirmed payWrite transaction hash (0x+64 hex)
+#   OAK_TEST_PRIVATE_KEY  0x-hex private key of the wallet that sent payWrite; it signs the write
+#                         (personal_sign over exactly the message) and becomes walletAddress.
+#                         It reaches `oak-chain tx write` through --key-env (environment, not
+#                         argv), so it never appears in process listings; still, use a dedicated test key.
+# TEST_WALLET, if set, must equal the key's address (the payment proof's `from`).
+# The transaction is built by the shared builder `oak-chain tx` (OAK_CHAIN_CLI overrides its path).
 
 set -e
 
@@ -30,10 +40,45 @@ VALIDATOR_URL="${VALIDATOR_URL:-http://localhost:8090}"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 DEFAULT_BINARY_FILE="${REPO_ROOT}/fixtures/binaries/do-it-live.jpeg"
 BINARY_FILE="${1:-$DEFAULT_BINARY_FILE}"
-TEST_WALLET="${TEST_WALLET:-0x03c6fced478cbbc9a4fab34ef9f40767739d1ff7}"
+TEST_WALLET="${TEST_WALLET:-}"
+PROPOSAL_ID="${PROPOSAL_ID:-}"
+TX_HASH="${TX_HASH:-}"
+OAK_TEST_PRIVATE_KEY="${OAK_TEST_PRIVATE_KEY:-}"
+OAK_CHAIN_CLI="${OAK_CHAIN_CLI:-${REPO_ROOT}/bin/oak-chain.mjs}"
 WRITE_WAIT_SECONDS="${WRITE_WAIT_SECONDS:-90}"
 OPERATION_ID=""
 STORAGE_PATH=""
+
+# Chain-backed preconditions: a real payWrite settlement and the payer's signing key, from env.
+require_settlement() {
+    local missing=""
+    [ -n "$PROPOSAL_ID" ] || missing="${missing} PROPOSAL_ID"
+    [ -n "$TX_HASH" ] || missing="${missing} TX_HASH"
+    [ -n "$OAK_TEST_PRIVATE_KEY" ] || missing="${missing} OAK_TEST_PRIVATE_KEY"
+    if [ -n "$missing" ]; then
+        echo -e "${RED}❌ Missing:${missing}${NC}"
+        echo -e "${YELLOW}   Sepolia writes need a real settlement: call ValidatorPaymentV5.payWrite(proposalId, flags)${NC}"
+        echo -e "${YELLOW}   from the signing wallet, then export PROPOSAL_ID (the id you paid for), TX_HASH (the${NC}"
+        echo -e "${YELLOW}   confirmed payWrite tx hash) and OAK_TEST_PRIVATE_KEY (that wallet's key). None are invented here.${NC}"
+        exit 1
+    fi
+    if ! [[ "$PROPOSAL_ID" =~ ^0x[0-9a-fA-F]{64}$ ]]; then
+        echo -e "${RED}❌ PROPOSAL_ID must be 0x + 64 hex (the payWrite proposalId): ${PROPOSAL_ID}${NC}"
+        exit 1
+    fi
+    if ! [[ "$TX_HASH" =~ ^0x[0-9a-fA-F]{64}$ ]]; then
+        echo -e "${RED}❌ TX_HASH must be the 0x + 64-hex payWrite transaction hash: ${TX_HASH}${NC}"
+        exit 1
+    fi
+    if [ "$(printf '%s' "$TX_HASH" | tr 'A-F' 'a-f')" = "$(printf '%s' "$PROPOSAL_ID" | tr 'A-F' 'a-f')" ]; then
+        echo -e "${RED}❌ TX_HASH equals PROPOSAL_ID; that is the mock settlement, not a Sepolia payWrite hash${NC}"
+        exit 1
+    fi
+    if ! command -v node > /dev/null 2>&1 || [ ! -f "$OAK_CHAIN_CLI" ]; then
+        echo -e "${RED}❌ Need node and the oak-chain CLI at ${OAK_CHAIN_CLI} (set OAK_CHAIN_CLI)${NC}"
+        exit 1
+    fi
+}
 
 # Check if IPFS is running
 check_ipfs() {
@@ -135,11 +180,6 @@ upload_to_ipfs() {
     ipfs pin rm "$EXPECTED_CID" > /dev/null 2>&1 || true
 }
 
-# Convert binary to base64 for JSON
-binary_to_base64() {
-    base64 < "$BINARY_FILE"
-}
-
 # Create write proposal with binary
 submit_proposal() {
     echo ""
@@ -147,28 +187,39 @@ submit_proposal() {
     echo -e "${CYAN}✍️  Submitting Write Proposal with Binary${NC}"
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     
-    echo -e "${YELLOW}   Encoding binary to base64...${NC}"
-    BINARY_BASE64=$(binary_to_base64)
-    
     echo -e "${YELLOW}   Creating proposal...${NC}"
-    
-    TX_HASH="0x$(openssl rand -hex 32 2>/dev/null || date +%s%N)"
-    SIGNATURE="0x$(openssl rand -hex 65 2>/dev/null || printf '%0130d' 0)"
+
     MIME_TYPE=$(file -b --mime-type "$BINARY_FILE")
-    
-    echo -e "${YELLOW}   Submitting to validator (form-encoded)...${NC}"
-    
-    # Use form-encoded data (matching 30min-economics-test.sh pattern)
+    # Conformant chain-backed write: the paid proposalId, ethereumTxHash = the payWrite tx hash,
+    # and a personal_sign by the paying wallet over exactly the message. No paymentTier.
+    local tx_json
+    if ! tx_json=$(OAK_TEST_PRIVATE_KEY="$OAK_TEST_PRIVATE_KEY" node "$OAK_CHAIN_CLI" tx write --key-env OAK_TEST_PRIVATE_KEY \
+        --proposal-id "$PROPOSAL_ID" --tx-hash "$TX_HASH" --content-type file \
+        --message "[IPFS TEST] Binary upload: $(basename "$BINARY_FILE") ($MIME_TYPE)" --format json); then
+        echo -e "${RED}❌ Could not build the signed write (check OAK_TEST_PRIVATE_KEY)${NC}"
+        exit 1
+    fi
+    local signer
+    signer=$(printf '%s' "$tx_json" | jq -r '.walletAddress')
+    if [ -n "$TEST_WALLET" ] && [ "$(printf '%s' "$TEST_WALLET" | tr 'A-F' 'a-f')" != "$signer" ]; then
+        echo -e "${RED}❌ TEST_WALLET ${TEST_WALLET} is not the address of OAK_TEST_PRIVATE_KEY (${signer})${NC}"
+        exit 1
+    fi
+    TEST_WALLET="$signer"
+    # Multipart: every signed field as a literal --form-string (unlike -F, it does not interpret
+    # ; @ <), plus the binary.
+    local form_args=()
+    local field
+    while IFS= read -r -d '' field; do
+        form_args+=(--form-string "$field")
+    done < <(printf '%s' "$tx_json" | jq -j 'to_entries[] | "\(.key)=\(.value)\u0000"')
+
+    echo -e "${YELLOW}   Submitting to validator (multipart form data)...${NC}"
+
     RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$VALIDATOR_URL/v1/propose-write" \
-        -H "Content-Type: application/x-www-form-urlencoded" \
-        -d "walletAddress=$TEST_WALLET" \
-        -d "ethereumTxHash=$TX_HASH" \
-        -d "contentType=file" \
-        -d "message=[IPFS TEST] Binary upload: $(basename "$BINARY_FILE") ($MIME_TYPE)" \
-        -d "binaryData=$BINARY_BASE64" \
-        -d "mimeType=$MIME_TYPE" \
-        -d "signature=$SIGNATURE" \
-        -d "paymentTier=standard")
+        -H "Expect:" \
+        "${form_args[@]}" \
+        -F "file=@${BINARY_FILE};type=${MIME_TYPE}")
     
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
     RESPONSE_BODY=$(echo "$RESPONSE" | sed '$d')
@@ -177,6 +228,7 @@ submit_proposal() {
         OPERATION_ID=$(echo "$RESPONSE_BODY" | jq -r '.operationId // .proposalId // empty' 2>/dev/null || true)
         STORAGE_PATH=$(echo "$RESPONSE_BODY" | jq -r '.storagePath // empty' 2>/dev/null || true)
         echo -e "${GREEN}✅ Proposal submitted (HTTP $HTTP_CODE)${NC}"
+        echo -e "${CYAN}   Proposal ID: $PROPOSAL_ID${NC}"
         echo -e "${CYAN}   TX Hash: $TX_HASH${NC}"
         echo -e "${CYAN}   Wallet: $TEST_WALLET${NC}"
         echo -e "${CYAN}   Binary: $(basename "$BINARY_FILE") (${FILE_SIZE_KB} KB)${NC}"
@@ -400,6 +452,7 @@ main() {
     echo -e "${PURPLE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
     
+    require_settlement
     check_ipfs
     check_validator
     check_binary
@@ -431,5 +484,7 @@ main() {
     echo ""
 }
 
-# Run main
-main
+# Run main (sourcing the script only defines its functions).
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+    main
+fi

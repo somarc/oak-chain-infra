@@ -19,7 +19,7 @@ and classifies current state and likely bottleneck.
 Options:
   --ops-base <url>      OPS base URL (default: $OPS_BASE)
   --host-base <url>     Validator host base without port (default: $HOST_BASE)
-  --leader-base <url>   Pin leader URL (skip auto leader detection)
+  --leader-base <url>   Pin leader URL (skip auto leader detection via /health currentRole)
   --interval <sec>      Sampling interval in seconds (default: $INTERVAL_SECONDS)
   --window <sec>        Rolling slope window in seconds (default: $WINDOW_SECONDS)
   --duration <sec>      Total runtime in seconds (default: $DURATION_SECONDS)
@@ -42,6 +42,7 @@ while (($# > 0)); do
 done
 
 mkdir -p "$LOG_DIR"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/suite-lib.sh"
 RUN_TS="$(date +%Y%m%d-%H%M%S)"
 CSV="${LOG_DIR}/live-eval-${RUN_TS}.csv"
 
@@ -138,9 +139,20 @@ while [ "$(date +%s)" -lt "$end_ts" ]; do
     continue
   fi
 
-  leader_node="$(printf '%s' "$overview_json" | jq -r '.data.leader.nodeId // 0' 2>/dev/null || echo 0)"
-  leader_port=$((8090 + (leader_node * 2)))
-  leader_url="${LEADER_BASE:-$HOST_BASE:$leader_port}"
+  # Leader from each node's /health currentRole; the OPS overview's leader defaults to node 0.
+  if [ -n "$LEADER_BASE" ]; then
+    leader_url="$LEADER_BASE"
+    leader_port="${LEADER_BASE##*:}"
+    leader_node="pinned"
+  else
+    read -r leader_node leader_port <<<"$(LEADER_DISCOVERY_HOST="$HOST_BASE" leader_node_and_port || true)"
+    if [ "$leader_port" = "0" ]; then
+      echo "$(date +%H:%M:%S)  no node reports currentRole=LEADER; skipping sample"
+      sleep "$INTERVAL_SECONDS"
+      continue
+    fi
+    leader_url="$HOST_BASE:$leader_port"
+  fi
 
   queue_json="$(curl -s "$leader_url/v1/proposals/queue/stats" || true)"
   if [ -z "$queue_json" ]; then

@@ -3,8 +3,15 @@ set -euo pipefail
 
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TESTS_DIR="$(cd "$LIB_DIR/.." && pwd)"
+LIFECYCLE_DIR="${LIFECYCLE_DIR:-$(cd "$TESTS_DIR/../lifecycle" && pwd)}"
+MEMBER_SCRIPT="${MEMBER_SCRIPT:-$LIFECYCLE_DIR/member.sh}"
 VALIDATOR_SCRIPT="${VALIDATOR_SCRIPT:-$TESTS_DIR/../debug/run-validator-node.sh}"
 CLUSTER_RUNTIME_ROOT="${CLUSTER_RUNTIME_ROOT:-$HOME/oak-chain}"
+# shellcheck source=../../lifecycle/lib/root-guard.sh
+source "$LIFECYCLE_DIR/lib/root-guard.sh"
+# Transactions come from the shared conformant builder `oak-chain tx` (test keys we hold).
+# shellcheck source=../../../lib/oak-tx.sh
+source "$LIB_DIR/../../../lib/oak-tx.sh"
 PID_DIR="${PID_DIR:-$CLUSTER_RUNTIME_ROOT/pids}"
 LOG_DIR="${LOG_DIR:-$CLUSTER_RUNTIME_ROOT/logs}"
 HOST="${HOST:-http://127.0.0.1}"
@@ -51,20 +58,6 @@ port_to_node() {
 node_pid_file() {
   local node=$1
   echo "$PID_DIR/validator-${node}.pid"
-}
-
-node_aeron_media_dir() {
-  local node=$1
-  local cluster_name="${CLUSTER_NAME:-single-cluster}"
-  if [ -n "${AERON_DIR_BASE:-}" ]; then
-    echo "${AERON_DIR_BASE%/}-${node}-driver"
-    return
-  fi
-  if [ -n "${AERON_RAMDISK_ROOT:-}" ]; then
-    echo "${AERON_RAMDISK_ROOT%/}/${cluster_name}/aeron-media-${node}-driver"
-    return
-  fi
-  echo "${CLUSTER_RUNTIME_ROOT}/validator-${node}/aeron-media-${node}-driver"
 }
 
 read_pid_file() {
@@ -246,124 +239,42 @@ wait_for_distinct_leader() {
   return 1
 }
 
-wait_for_pid_file_value() {
-  local pid_file=$1
-  local timeout_seconds=${2:-5}
-  local elapsed=0
-  while [ "$elapsed" -lt "$timeout_seconds" ]; do
-    local pid
-    pid=$(read_pid_file "$pid_file")
-    if [ -n "$pid" ]; then
-      echo "$pid"
-      return 0
-    fi
-    sleep 1
-    elapsed=$((elapsed + 1))
-  done
-  return 1
+# Fault actions (risk class C) go through lifecycle/member.sh, which checks PID identity
+# (the pid's command line must name this root's validator-N store), refuses to start over a
+# port held by another root, and enforces the launch-record membership. They are refused on
+# the protected live root unless OAK_ALLOW_LIVE_ROOT=1. member.sh logs a start to
+# $LOG_DIR/start-validator-N.log (the old in-lib launcher used rejoin-validator-N.log).
+member_action() {
+  CLUSTER_RUNTIME_ROOT="$CLUSTER_RUNTIME_ROOT" PID_DIR="$PID_DIR" LOG_DIR="$LOG_DIR" \
+    VALIDATOR_SCRIPT="$VALIDATOR_SCRIPT" "$MEMBER_SCRIPT" "$@"
 }
 
-launch_detached_process() {
-  local pid_file="$1"
-  local log_file="$2"
-  shift 2
-
-  mkdir -p "$(dirname "$pid_file")" "$(dirname "$log_file")"
-
-  if command -v setsid >/dev/null 2>&1; then
-    setsid "$@" >>"$log_file" 2>&1 &
-    echo $! > "$pid_file"
-    return 0
-  fi
-
-  if command -v python3 >/dev/null 2>&1; then
-    python3 - "$pid_file" "$log_file" "$@" <<'PY'
-import os
-import sys
-
-pid_file = sys.argv[1]
-log_file = sys.argv[2]
-cmd = sys.argv[3:]
-
-pid = os.fork()
-if pid > 0:
-    os._exit(0)
-
-os.setsid()
-
-pid = os.fork()
-if pid > 0:
-    with open(pid_file, "w", encoding="utf-8") as handle:
-        handle.write(f"{pid}\n")
-    os._exit(0)
-
-with open(log_file, "ab", buffering=0) as log:
-    os.dup2(log.fileno(), 1)
-    os.dup2(log.fileno(), 2)
-os.execvp(cmd[0], cmd)
-PY
-    wait_for_pid_file_value "$pid_file" >/dev/null
-    return $?
-  fi
-
-  nohup "$@" >>"$log_file" 2>&1 &
-  echo $! > "$pid_file"
+require_fault_root() {
+  oak_guard_require_disposable_root "$CLUSTER_RUNTIME_ROOT" "$1"
 }
 
 start_node() {
   local node=$1
   mkdir -p "$PID_DIR" "$LOG_DIR"
-  local pid_file
-  pid_file=$(node_pid_file "$node")
-  local aeron_media_dir
-  aeron_media_dir=$(node_aeron_media_dir "$node")
-  if [ -d "$aeron_media_dir" ]; then
-    rm -rf "$aeron_media_dir"
-  fi
-  rm -f "$pid_file"
-  launch_detached_process "$pid_file" "$LOG_DIR/rejoin-validator-${node}.log" \
-    "$VALIDATOR_SCRIPT" "$node"
-  local pid
-  pid=$(read_pid_file "$pid_file")
-  echo "$pid" >"$pid_file"
-  log "Started validator-${node} (pid=${pid})"
+  log "Starting validator-${node} via member.sh"
+  member_action start "$node"
 }
 
 graceful_stop_node() {
   local node=$1
-  local pid_file
-  pid_file=$(node_pid_file "$node")
-  local pid
-  pid=$(read_pid_file "$pid_file")
-  if ! is_pid_alive "$pid"; then
-    log "validator-${node} already down"
-    rm -f "$pid_file"
-    return 0
-  fi
-  log "Gracefully stopping validator-${node} (pid=${pid})"
-  kill "$pid" >/dev/null 2>&1 || true
-  if ! wait_for_pid_exit "$pid" "$GRACEFUL_STOP_WAIT_SECONDS"; then
+  require_fault_root "graceful stop of validator-${node} (SIGTERM)" || return 1
+  log "Gracefully stopping validator-${node} via member.sh (SIGTERM, ${GRACEFUL_STOP_WAIT_SECONDS}s, no SIGKILL escalation)"
+  if ! STOP_WAIT_SECONDS="$GRACEFUL_STOP_WAIT_SECONDS" STOP_ESCALATE=false member_action stop "$node"; then
     log "validator-${node} did not exit within ${GRACEFUL_STOP_WAIT_SECONDS}s after TERM"
     return 1
   fi
-  rm -f "$pid_file"
 }
 
 crash_stop_node() {
   local node=$1
-  local pid_file
-  pid_file=$(node_pid_file "$node")
-  local pid
-  pid=$(read_pid_file "$pid_file")
-  if ! is_pid_alive "$pid"; then
-    log "validator-${node} already down"
-    rm -f "$pid_file"
-    return 0
-  fi
-  log "Crashing validator-${node} (pid=${pid})"
-  kill -9 "$pid" >/dev/null 2>&1 || true
-  wait_for_pid_exit "$pid" "$CRASH_STOP_WAIT_SECONDS" || true
-  rm -f "$pid_file"
+  require_fault_root "hard crash of validator-${node} (SIGKILL)" || return 1
+  log "Crashing validator-${node} via member.sh (SIGKILL)"
+  KILL_WAIT_SECONDS="$CRASH_STOP_WAIT_SECONDS" member_action kill "$node"
 }
 
 stop_node() {
@@ -383,19 +294,6 @@ stop_node() {
   esac
 }
 
-random_hex() {
-  local bytes=$1
-  openssl rand -hex "$bytes" 2>/dev/null || python3 - "$bytes" <<'PY'
-import secrets
-import sys
-print(secrets.token_hex(int(sys.argv[1])))
-PY
-}
-
-random_proposal_id() {
-  printf '0x%s\n' "$(random_hex 32)"
-}
-
 sharding_local_prefix_range() {
   python3 - <<'PY'
 import os
@@ -410,11 +308,15 @@ if match:
 PY
 }
 
+# Shard-local test wallet (a key we hold) whose address starts with the given byte.
 wallet_for_prefix_decimal() {
   local prefix_decimal=$1
-  printf '0x%02x%038x\n' "$prefix_decimal" 0
+  test_wallet_for_prefix "$(printf '%02x' "$prefix_decimal")"
 }
 
+# A held test wallet for this cluster's shard: inside -Doak.sharding.local.prefixes when set
+# (start + offset), otherwise the test key with the default wallet's first byte (see
+# modes/mock/lib/oak-tx.sh test_wallet_for_address).
 resolve_wallet_for_local_shard() {
   local default_wallet="$1"
   local offset="${2:-0}"
@@ -435,35 +337,32 @@ resolve_wallet_for_local_shard() {
     return 0
   fi
 
-  printf '%s\n' "$default_wallet"
+  test_wallet_for_address "$default_wallet"
 }
 
+# Conformant write (modes/mock/TRANSACTION-CONTRACT.md) built by `oak-chain tx write`: signed by
+# the wallet's test key over exactly the message (label), ethereumTxHash = proposalId (mock
+# settlement), no paymentTier. Prints code|operationId|storagePath|body. A wallet we hold no key
+# for prints 000 and returns 1.
 submit_write() {
   local base=$1
   local wallet=$2
   local label=$3
   local organization=${4:-}
-  local tx_hash="0x$(random_hex 32)"
-  local signature="0x$(random_hex 65)"
-  local proposal_id
-  proposal_id=$(random_proposal_id)
-  local response
-  local curl_args=(
-    curl -s -w "\n%{http_code}" -X POST "$base/v1/propose-write"
-    "${HEADER_ARGS[@]}"
-    -H "Content-Type: application/x-www-form-urlencoded"
-    -d "walletAddress=${wallet}"
-    -d "proposalId=${proposal_id}"
-    -d "ethereumTxHash=${tx_hash}"
-    -d "contentType=page"
-    -d "message=${label}"
-    -d "signature=${signature}"
-    -d "paymentTier=standard"
-  )
+  local form
+  local tx_args=(write --message "$label" --content-type page)
   if [ -n "$organization" ]; then
-    curl_args+=(-d "organization=${organization}")
+    tx_args+=(--organization "$organization")
   fi
-  response=$("${curl_args[@]}")
+  if ! form=$(oak_tx_as "$wallet" "${tx_args[@]}"); then
+    printf '000|||{"error":"could not build a signed write for wallet %s"}\n' "$wallet"
+    return 1
+  fi
+  local response
+  response=$(curl -s -w "\n%{http_code}" -X POST "$base/v1/propose-write" \
+    ${HEADER_ARGS[@]+"${HEADER_ARGS[@]}"} \
+    -H "Content-Type: application/x-www-form-urlencoded" \
+    --data-binary "$form")
   local code
   code=$(echo "$response" | tail -n1)
   local body
@@ -475,23 +374,22 @@ submit_write() {
   printf '%s|%s|%s|%s\n' "$code" "$op_id" "$storage_path" "$body"
 }
 
+# Conformant delete built by `oak-chain tx delete`: signed by the wallet's test key over exactly
+# contentPath. Prints code|operationId|body.
 submit_delete() {
   local base=$1
   local wallet=$2
   local storage_path=$3
-  local tx_hash="0x$(random_hex 32)"
-  local signature="0x$(random_hex 65)"
-  local proposal_id
-  proposal_id=$(random_proposal_id)
+  local form
+  if ! form=$(oak_tx_as "$wallet" delete --content-path "$storage_path"); then
+    printf '000||{"error":"could not build a signed delete for wallet %s"}\n' "$wallet"
+    return 1
+  fi
   local response
   response=$(curl -s -w "\n%{http_code}" -X POST "$base/v1/propose-delete" \
-    "${HEADER_ARGS[@]}" \
+    ${HEADER_ARGS[@]+"${HEADER_ARGS[@]}"} \
     -H "Content-Type: application/x-www-form-urlencoded" \
-    --data-urlencode "walletAddress=${wallet}" \
-    --data-urlencode "proposalId=${proposal_id}" \
-    --data-urlencode "signature=${signature}" \
-    --data-urlencode "contentPath=${storage_path}" \
-    --data-urlencode "ethereumTxHash=${tx_hash}")
+    --data-binary "$form")
   local code
   code=$(echo "$response" | tail -n1)
   local body

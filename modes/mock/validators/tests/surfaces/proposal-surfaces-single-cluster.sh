@@ -41,8 +41,8 @@ QUORUM_ENVELOPE_WALLET="${QUORUM_ENVELOPE_WALLET:-}"
 DEFAULT_PRIMARY_WALLET="0x1100000000000000000000000000000000000000"
 DEFAULT_SECONDARY_WALLET="0x2200000000000000000000000000000000000000"
 DEFAULT_SMOKE_WALLET="0x3300000000000000000000000000000000000000"
-DEFAULT_FAILOVER_FOLLOWER_WALLET="0x1111111111111111111111111111111111111111"
-DEFAULT_FAILOVER_LEADER_WALLET="0x2222222222222222222222222222222222222222"
+DEFAULT_FAILOVER_FOLLOWER_WALLET="0x6600000000000000000000000000000000000000"
+DEFAULT_FAILOVER_LEADER_WALLET="0x7700000000000000000000000000000000000000"
 DEFAULT_CATCHUP_WALLET="0x4444444444444444444444444444444444444444"
 DEFAULT_QUORUM_ENVELOPE_WALLET="0x5555555555555555555555555555555555555555"
 
@@ -215,6 +215,12 @@ ensure_start_arg "--no-load-observer"
 load_cluster_env
 source "$TESTS_DIR/lib/_cluster_test_lib.sh"
 
+# Class D campaign (deletes, optional --fresh, stability faults): refuse the protected live root
+# unless OAK_ALLOW_LIVE_ROOT=1, and refuse when the configured ports belong to another root
+# (a --fresh would kill that cluster; without --fresh the writes would land on it).
+oak_guard_require_target_from_env "proposal surfaces campaign on ${CLUSTER_RUNTIME_ROOT} (START_CLUSTER=${START_CLUSTER} ${START_CLUSTER_ARGS})" \
+  || fail "Root guard refused this run; see above"
+
 PRIMARY_WALLET="${PRIMARY_WALLET:-$(resolve_wallet_for_local_shard "$DEFAULT_PRIMARY_WALLET" 0)}"
 SECONDARY_WALLET="${SECONDARY_WALLET:-$(resolve_wallet_for_local_shard "$DEFAULT_SECONDARY_WALLET" 1)}"
 SMOKE_WALLET="${SMOKE_WALLET:-$(resolve_wallet_for_local_shard "$DEFAULT_SMOKE_WALLET" 2)}"
@@ -222,6 +228,16 @@ FAILOVER_FOLLOWER_WALLET="${FAILOVER_FOLLOWER_WALLET:-$(resolve_wallet_for_local
 FAILOVER_LEADER_WALLET="${FAILOVER_LEADER_WALLET:-$(resolve_wallet_for_local_shard "$DEFAULT_FAILOVER_LEADER_WALLET" 4)}"
 CATCHUP_WALLET="${CATCHUP_WALLET:-$(resolve_wallet_for_local_shard "$DEFAULT_CATCHUP_WALLET" 5)}"
 QUORUM_ENVELOPE_WALLET="${QUORUM_ENVELOPE_WALLET:-$(resolve_wallet_for_local_shard "$DEFAULT_QUORUM_ENVELOPE_WALLET" 6)}"
+# Every write/delete is signed (oak-chain tx), so each wallet must be a test key we hold: a supplied
+# address selects the held test key for its first byte (modes/mock/lib/oak-tx.sh). Roles need
+# distinct first bytes to stay distinct wallets.
+PRIMARY_WALLET="$(test_wallet_for_address "$PRIMARY_WALLET")"
+SECONDARY_WALLET="$(test_wallet_for_address "$SECONDARY_WALLET")"
+SMOKE_WALLET="$(test_wallet_for_address "$SMOKE_WALLET")"
+FAILOVER_FOLLOWER_WALLET="$(test_wallet_for_address "$FAILOVER_FOLLOWER_WALLET")"
+FAILOVER_LEADER_WALLET="$(test_wallet_for_address "$FAILOVER_LEADER_WALLET")"
+CATCHUP_WALLET="$(test_wallet_for_address "$CATCHUP_WALLET")"
+QUORUM_ENVELOPE_WALLET="$(test_wallet_for_address "$QUORUM_ENVELOPE_WALLET")"
 
 is_no_quorum_response() {
   local status="$1"

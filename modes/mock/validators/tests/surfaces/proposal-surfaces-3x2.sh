@@ -40,12 +40,28 @@ WALLET_A="${WALLET_A:-0x1100000000000000000000000000000000000000}"
 WALLET_B="${WALLET_B:-0x8800000000000000000000000000000000000000}"
 SMOKE_WALLET_A="${SMOKE_WALLET_A:-0x1200000000000000000000000000000000000000}"
 SMOKE_WALLET_B="${SMOKE_WALLET_B:-0x8900000000000000000000000000000000000000}"
-WALLET_A_FAILOVER_FOLLOWER="${WALLET_A_FAILOVER_FOLLOWER:-0x1111111111111111111111111111111111111111}"
+WALLET_A_FAILOVER_FOLLOWER="${WALLET_A_FAILOVER_FOLLOWER:-0x1300000000000000000000000000000000000000}"
 WALLET_A_FAILOVER_LEADER="${WALLET_A_FAILOVER_LEADER:-0x2222222222222222222222222222222222222222}"
 WALLET_A_QUORUM="${WALLET_A_QUORUM:-0x3333333333333333333333333333333333333333}"
-WALLET_B_FAILOVER_FOLLOWER="${WALLET_B_FAILOVER_FOLLOWER:-0x8800000000000000000000000000000000000001}"
+WALLET_B_FAILOVER_FOLLOWER="${WALLET_B_FAILOVER_FOLLOWER:-0x8a00000000000000000000000000000000000000}"
 WALLET_B_FAILOVER_LEADER="${WALLET_B_FAILOVER_LEADER:-0x9900000000000000000000000000000000000002}"
 WALLET_B_CATCHUP="${WALLET_B_CATCHUP:-0xaa00000000000000000000000000000000000003}"
+
+# Writes and deletes are signed by the shared builder `oak-chain tx`, so every wallet must be a
+# test key we hold. Each address above selects the held test key for its first byte (the shard
+# prefix), so roles keep distinct first bytes (modes/mock/lib/oak-tx.sh).
+# shellcheck source=../../../lib/oak-tx.sh
+source "$TESTS_DIR/../../lib/oak-tx.sh"
+WALLET_A="$(test_wallet_for_address "$WALLET_A")"
+WALLET_B="$(test_wallet_for_address "$WALLET_B")"
+SMOKE_WALLET_A="$(test_wallet_for_address "$SMOKE_WALLET_A")"
+SMOKE_WALLET_B="$(test_wallet_for_address "$SMOKE_WALLET_B")"
+WALLET_A_FAILOVER_FOLLOWER="$(test_wallet_for_address "$WALLET_A_FAILOVER_FOLLOWER")"
+WALLET_A_FAILOVER_LEADER="$(test_wallet_for_address "$WALLET_A_FAILOVER_LEADER")"
+WALLET_A_QUORUM="$(test_wallet_for_address "$WALLET_A_QUORUM")"
+WALLET_B_FAILOVER_FOLLOWER="$(test_wallet_for_address "$WALLET_B_FAILOVER_FOLLOWER")"
+WALLET_B_FAILOVER_LEADER="$(test_wallet_for_address "$WALLET_B_FAILOVER_LEADER")"
+WALLET_B_CATCHUP="$(test_wallet_for_address "$WALLET_B_CATCHUP")"
 
 A_ORGS=(AtlasNorth AtlasSouth AtlasArchive)
 B_ORGS=(BeaconNorth BeaconSouth BeaconArchive)
@@ -187,19 +203,6 @@ ensure_start_arg() {
 if [ "$START_3X2" = "true" ] && consensus_jar_is_stale; then
   ensure_start_arg "--build"
 fi
-
-random_hex() {
-  local bytes="$1"
-  openssl rand -hex "$bytes" 2>/dev/null || python3 - "$bytes" <<'PY'
-import secrets
-import sys
-print(secrets.token_hex(int(sys.argv[1])))
-PY
-}
-
-random_proposal_id() {
-  printf '0x%s\n' "$(random_hex 32)"
-}
 
 normalize_wallet() {
   local wallet="$1"
@@ -378,25 +381,20 @@ submit_write_request() {
   local label="$4"
   local body_file
   local header_file
-  local proposal_id
+  local form
   local rate_limit_attempt=0
   local no_quorum_attempt=0
+  # One signed transaction (oak-chain tx), resent unchanged on 429/no_quorum retries.
+  form="$(oak_tx_as "$wallet" write --message "$label" --content-type page --organization "$organization")" ||
+    fail "could not build a signed write for wallet ${wallet}"
   body_file="$(mktemp)"
   header_file="$(mktemp)"
-  proposal_id="$(random_proposal_id)"
 
   while :; do
     REQUEST_STATUS="$(curl -s -D "$header_file" -o "$body_file" -w "%{http_code}" \
       -X POST "${base_url}/v1/propose-write" \
       -H "Content-Type: application/x-www-form-urlencoded" \
-      -d "walletAddress=${wallet}" \
-      -d "proposalId=${proposal_id}" \
-      -d "ethereumTxHash=0x$(random_hex 32)" \
-      -d "organization=${organization}" \
-      -d "contentType=page" \
-      -d "message=${label}" \
-      -d "signature=0x$(random_hex 65)" \
-      -d "paymentTier=standard" || echo "000")"
+      --data-binary "$form" || echo "000")"
     REQUEST_BODY="$(cat "$body_file")"
     REQUEST_LOCATION="$(awk 'BEGIN{IGNORECASE=1} /^Location:/ {print $2}' "$header_file" | tr -d '\r' | tail -n 1)"
 
@@ -429,22 +427,20 @@ submit_delete_request() {
   local content_path="$3"
   local body_file
   local header_file
-  local proposal_id
+  local form
   local rate_limit_attempt=0
   local no_quorum_attempt=0
+  # One signed transaction (signature over contentPath), resent unchanged on retries.
+  form="$(oak_tx_as "$wallet" delete --content-path "$content_path")" ||
+    fail "could not build a signed delete for wallet ${wallet}"
   body_file="$(mktemp)"
   header_file="$(mktemp)"
-  proposal_id="$(random_proposal_id)"
 
   while :; do
     REQUEST_STATUS="$(curl -s -D "$header_file" -o "$body_file" -w "%{http_code}" \
       -X POST "${base_url}/v1/propose-delete" \
       -H "Content-Type: application/x-www-form-urlencoded" \
-      --data-urlencode "walletAddress=${wallet}" \
-      --data-urlencode "proposalId=${proposal_id}" \
-      --data-urlencode "signature=0x$(random_hex 65)" \
-      --data-urlencode "contentPath=${content_path}" \
-      --data-urlencode "ethereumTxHash=0x$(random_hex 32)" || echo "000")"
+      --data-binary "$form" || echo "000")"
     REQUEST_BODY="$(cat "$body_file")"
     REQUEST_LOCATION="$(awk 'BEGIN{IGNORECASE=1} /^Location:/ {print $2}' "$header_file" | tr -d '\r' | tail -n 1)"
 
@@ -803,6 +799,15 @@ run_cluster_test() {
     "$@"
   ) 2>&1 | tee -a "$RUN_LOG"
 }
+
+# Class D campaign (deletes, optional --fresh, stability faults): refuse a protected live root
+# unless OAK_ALLOW_LIVE_ROOT=1, and refuse when a cluster's ports belong to another root.
+source "$LIFECYCLE_DIR/lib/root-guard.sh"
+for guard_config in "$CLUSTER_A_CONFIG" "$CLUSTER_B_CONFIG"; do
+  ( load_cluster_env "$guard_config"
+    oak_guard_require_target_from_env "3x2 proposal surfaces campaign on ${CLUSTER_RUNTIME_ROOT} (START_3X2=${START_3X2} ${START_3X2_ARGS})"
+  ) || fail "Root guard refused this run for ${guard_config}; see above"
+done
 
 A_INFO="$(resolve_cluster "$CLUSTER_A_CONFIG")"
 B_INFO="$(resolve_cluster "$CLUSTER_B_CONFIG")"

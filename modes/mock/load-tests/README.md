@@ -2,7 +2,18 @@
 
 Progressive load tests for validating Oak Chain performance and stability.
 
-Prerequisites: Bash, curl, Python 3, OpenSSL, and `jq` when accepted-write capture is enabled.
+Prerequisites: Bash, curl, Python 3, OpenSSL, Node.js 20+ (with this repo's `npm install`), and `jq` when accepted-write capture is enabled.
+
+## Valid transactions
+
+Every write and delete these scripts send is valid under the runtime's contract ([`../TRANSACTION-CONTRACT.md`](../TRANSACTION-CONTRACT.md)), built by the one shared builder `oak-chain tx` (`src/tx-cli.mjs`, via [`../lib/oak-tx.sh`](../lib/oak-tx.sh); `OAK_CHAIN_CLI` overrides the CLI path):
+
+- `signature` is a `personal_sign` by `walletAddress` over exactly `message` (writes) or exactly `contentPath` (deletes).
+- `ethereumTxHash` is the mock settlement hash, which equals `proposalId`.
+- Wallets are test keys we hold: client N is `oak-chain tx key --index N` (`WALLETS` in `suite-lib.sh`, listed in [`../lib/test-wallets.tsv`](../lib/test-wallets.tsv)).
+- Each client pre-signs its whole batch in one `oak-chain tx write --count N` call. Form writes send that body as-is; validator-hosted binaries send the same fields as multipart `--form-string` parts plus the file.
+- **`paymentTier` is gone.** The runtime does not read it; the tier comes from the settlement proof. The `TIER_*_WEIGHT` knobs and `select_payment_tier` were removed, and `03-heavy-30min-priority.sh` no longer differs from the heavy profile in tier.
+- Client registration (`/v1/register-client`) is unsigned because the runtime does not read a signature there. The clientId is `client-<N>-<wallet bytes>`, so a cluster that persisted `client-<N>` for an older wallet does not answer 409.
 
 ## Ladder (Progressive Intensity)
 
@@ -25,22 +36,52 @@ Prerequisites: Bash, curl, Python 3, OpenSSL, and `jq` when accepted-write captu
 Binary mix defaults:
 - Validator-hosted binaries are the default effective path.
 - Synthetic client-side `ipfsCid` traffic is disabled by default because the validator now requires known CID mappings for enterprise CID writes.
-- Set `ALLOW_SYNTHETIC_IPFS_CIDS=true` only if you intentionally want the legacy synthetic-CID path (for example, to reproduce `unknown_ipfs_cid` rejections).
+- `ALLOW_SYNTHETIC_IPFS_CIDS=true` adds the synthetic-CID path back as an explicit **negative path**: validly signed writes that reference an `ipfsCid` the validator has never seen. The runtime must reject them (403 for non-enterprise clients, 422 for an unknown CID). Rejections are counted as `synthetic_cid_rejected`, not as failures, and any acceptance fails the run (`synthetic_cid_accepted`).
 
 ## How to Run
 
 ```bash
-# Ensure validators are running
-./local-dev.sh start validators --fresh
+# Ensure validators are running (from oak-chain-infra; or: oak-chain mock up)
+./modes/mock/validators/lifecycle/start-cluster.sh
 
-# Smoke test
+# Smoke test (from modes/mock)
 ./load-tests/00-smoke-one-write.sh
 
 # Heavy test
 ./load-tests/03-heavy-30min.sh
 ```
 
+## Safety, Exit Codes, and the Live Root
+
+The long-lived cluster under the legacy root `~/oak-chain` is a read-only baseline
+(see `validators/tests/CONSENSUS-TEST-CHARTER.md` §3). The shared guard
+`validators/lifecycle/lib/root-guard.sh` enforces it:
+
+- Risk class C/D scripts refuse to run when `CLUSTER_RUNTIME_ROOT` (default `~/oak-chain`)
+  is the protected live root: `07` (SIGKILL + restart), `08` (`--fresh` per case),
+  `10` / `10-light` / `11` (deletes, GC, `--fresh`), and `12` (SIGSTOP). Set
+  `OAK_ALLOW_LIVE_ROOT=1` to approve such a run explicitly.
+- They also refuse when the cluster's HTTP/Aeron ports (or the `VALIDATOR_URL` port) are held
+  by processes that do not belong to `CLUSTER_RUNTIME_ROOT`. `start-cluster.sh --fresh`
+  applies the same check, so a `--fresh` aimed at another root can no longer kill the live
+  cluster by port. `stop-cluster.sh` stays unguarded but only kills its own root's listeners.
+- Fault actions go through `validators/lifecycle/member.sh`, which checks PID identity.
+- Leader discovery uses each node's `/health` `currentRole`, never the OPS overview's leader.
+
+Exit codes are honest:
+
+- `run-load-test.sh` (every ladder profile) exits non-zero when any client fails (including
+  registration), when no write was attempted, or when the non-2xx rate (4xx/5xx/000, not 429)
+  exceeds `MAX_NON_2XX_RATE` (default `0.02`) or the 429 rate exceeds `MAX_429_RATE`
+  (default `0.10`). It prints one `LOAD_SUMMARY` line. `00-smoke-one-write.sh` passes only when
+  its single write is 2xx.
+- `run-benchmark.sh` still scores after a failed load run, then fails if either side failed.
+- `09-delete-replay.sh` and `11` send a valid `0x`-prefixed 32-byte `proposalId`, follow a
+  follower's 307 to the leader with the POST preserved, and exit non-zero on any rejected delete.
+
 ## Config Knobs (Env Vars)
+
+Profiles honor exported env (each wrapper uses `X="${X:-default}"`):
 
 ```bash
 export VALIDATOR_URL=http://localhost:8090
@@ -56,6 +97,8 @@ export HTTP_REQUEST_TIMEOUT_SECONDS=30
 export SLEEP_MIN_MS=25
 export SLEEP_MAX_MS=200
 export CAPTURE_WRITE_ACCEPTS=false
+export MAX_NON_2XX_RATE=0.02
+export MAX_429_RATE=0.10
 ```
 
 ## Logs
@@ -64,6 +107,8 @@ Logs go to: `~/oak-chain/logs` by default. Override with `LOG_DIR`.
 
 When `CAPTURE_WRITE_ACCEPTS=true`, accepted write responses are captured in:
 - `~/oak-chain/logs/<test-name>-accepted-<timestamp>/client-<n>.ndjson`
+
+Each line holds `wallet`, `organization`, `proposalId`, `ethereumTxHash`, `signature` and `storagePath`. Delete replay signs its deletes with the captured wallet's test key, so captures from before test keys (other wallets) cannot be replayed.
 
 ## Monitoring
 
@@ -356,4 +401,5 @@ SKIP_CLUSTER_RESTART=true ./load-tests/11-e2e-write-namespace-delete-gc.sh
 
 ## Legacy Scripts
 
-Archived under `load-tests/archive/legacy-2026-02-03/`.
+The pre-February-2026 legacy scripts are not carried in this repository; there is no
+`load-tests/archive/` directory.

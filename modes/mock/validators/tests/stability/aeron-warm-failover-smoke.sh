@@ -92,9 +92,19 @@ for cycle in $(seq 1 "$WARM_FAILOVER_CYCLES"); do
   fi
 done
 
-if rg -n "concurrent session limit" "$LOG_DIR"/validator-*.log >/dev/null 2>&1; then
+# grep -n is the fallback when rg is missing: a missing tool must not turn the check green.
+if command -v rg >/dev/null 2>&1; then
+  search_logs() { rg -n "$@"; }
+else
+  search_logs() { grep -n "$@"; }
+fi
+if ! ls "$LOG_DIR"/validator-*.log >/dev/null 2>&1; then
+  log "WARM_FAILOVER no validator logs under ${LOG_DIR}; cannot check for concurrent session limit"
+  exit 1
+fi
+if search_logs "concurrent session limit" "$LOG_DIR"/validator-*.log >/dev/null 2>&1; then
   log "WARM_FAILOVER detected concurrent session limit in validator logs"
-  rg -n "concurrent session limit" "$LOG_DIR"/validator-*.log || true
+  search_logs "concurrent session limit" "$LOG_DIR"/validator-*.log || true
   exit 1
 fi
 

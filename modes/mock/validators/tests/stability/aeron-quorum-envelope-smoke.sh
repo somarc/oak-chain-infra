@@ -37,6 +37,7 @@ restore_cluster() {
 trap 'restore_cluster || true' EXIT
 
 QUORUM_ENVELOPE_WALLET="${QUORUM_ENVELOPE_WALLET:-$(resolve_wallet_for_local_shard "$DEFAULT_QUORUM_ENVELOPE_WALLET" 5)}"
+QUORUM_ENVELOPE_WALLET="$(test_wallet_for_address "$QUORUM_ENVELOPE_WALLET")"  # a key we hold (signed writes)
 
 record_stopped_node() {
   local node=$1
