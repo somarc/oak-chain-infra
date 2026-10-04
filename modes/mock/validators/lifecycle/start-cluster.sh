@@ -585,7 +585,7 @@ preflight_cleanup() {
     port_list+=($((ODD_HTTP_BASE_PORT + (node * VALIDATOR_HTTP_PORT_STEP))))
   done
   for node in "${NODES[@]}"; do
-    for offset in 0 1 2 3 4 5; do
+    for offset in 0 1 2 3 4 5 6; do
       port_list+=($((AERON_CLUSTER_BASE_PORT + (node * 100) + offset)))
     done
   done

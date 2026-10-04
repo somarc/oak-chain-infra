@@ -251,7 +251,7 @@ stop_validator_processes
 
 port_list=("${HTTP_PORTS[@]}" "$OPS_PROXY_PORT")
 for node in "${NODES[@]}"; do
-  for offset in 0 1 2 3 4 5; do
+  for offset in 0 1 2 3 4 5 6; do
     port_list+=($((AERON_CLUSTER_BASE_PORT + (node * 100) + offset)))
   done
 done

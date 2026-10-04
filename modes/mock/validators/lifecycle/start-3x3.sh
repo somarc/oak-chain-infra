@@ -48,7 +48,7 @@ cluster_aeron_range() {
     load_cluster_env "$cluster_config"
     local cluster_size="${OAK_CLUSTER_SIZE:-3}"
     local start_port="${AERON_CLUSTER_BASE_PORT:-9000}"
-    local end_port=$((start_port + ((cluster_size - 1) * 100) + 5))
+    local end_port=$((start_port + ((cluster_size - 1) * 100) + 6))
     printf '%s|%s|%s|%s\n' \
       "${OAK_CLUSTER_NAME:-unknown}" \
       "$cluster_size" \
