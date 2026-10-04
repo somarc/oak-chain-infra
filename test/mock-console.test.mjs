@@ -165,9 +165,12 @@ test('keys map to lifecycle script actions with confirmation for destructive one
     result = handleKey(ui, 's', ctx);
     assert.equal(result.action, null);
     assert.match(result.state.confirm.prompt, /Fresh start wipes validator runtime state under/);
-    const confirmed = handleKey(result.state, 'y', ctx);
+    const confirmed = handleKey({ ...result.state, view: 'member' }, 'y', ctx);
     assert.deepEqual(confirmed.action.args, ['--cluster-size', '3', '--fresh', '--build']);
     assert.equal(confirmed.state.confirm, null);
+    assert.equal(confirmed.state.view, 'ops', 'a dispatched start shows its own output');
+    assert.equal(confirmed.state.fresh, false, 'fresh is one-shot');
+    assert.equal(confirmed.state.build, false, 'build is one-shot');
     const cancelled = handleKey(result.state, 'n', ctx);
     assert.equal(cancelled.action, null);
     assert.equal(cancelled.state.message.text, 'cancelled');
@@ -188,6 +191,9 @@ test('keys map to lifecycle script actions with confirmation for destructive one
     assert.equal(handleKey(ui, '\u001b[A', ctx).state.selected, 1);
     assert.equal(handleKey(ui, '7', ctx).state.message.text, 'no member 7');
     assert.equal(handleKey(ui, 'l', ctx).state.view, 'member');
+    const fromLogView = handleKey({ ...ui, view: 'member', fresh: true }, 'u', ctx);
+    assert.equal(fromLogView.state.view, 'ops', 'member actions also switch to their output');
+    assert.equal(fromLogView.state.fresh, true, 'member actions leave start toggles alone');
   } finally {
     await rm(root, { force: true, recursive: true });
   }
@@ -283,6 +289,33 @@ test('a fresh console attaches to a running cluster instead of offering a cold s
     const stopped = view(['stopped', 'stopped', 'stopped']);
     assert.match(stopped, /OPERATION {2}none yet · press s to start the cluster/);
     assert.doesNotMatch(stopped, /ATTACHED/);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test('member log view says which run the visible lines belong to', async () => {
+  const { config, root } = await baseConfig();
+  try {
+    const now = Date.now();
+    const render = (states, memberLogMtime) => renderConsole({
+      color: false,
+      config,
+      height: 30,
+      memberLog: ['2026-10-04 08:58:23.643 INFO shutdown'],
+      memberLogMtime,
+      now,
+      snapshot: snapshotFor(config, states),
+      ui: { ...initialUiState(), view: 'member' },
+      width: 160,
+    }).join('\n');
+
+    assert.match(render(['stopped', 'stopped', 'stopped'], now - 40_000), /LOG {2}validator-0\.log · member down: previous run · last write \d\d:\d\d:\d\d \(40s ago\)/);
+    // snapshotFor gives running members 65s of uptime: a 90s-old write predates the process.
+    assert.match(render(['up', 'up', 'up'], now - 90_000), /validator-0\.log · earlier run; nothing from the current process yet · last write/);
+    const live = render(['up', 'up', 'up'], now - 1_000);
+    assert.match(live, /last write \d\d:\d\d:\d\d \(1s ago\)/);
+    assert.doesNotMatch(live, /previous run|earlier run/);
   } finally {
     await rm(root, { force: true, recursive: true });
   }

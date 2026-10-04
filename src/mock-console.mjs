@@ -366,7 +366,23 @@ function runAction(label, script, args) {
   return { args, label, script, type: 'run' };
 }
 
+// A dispatched operation takes over the pane so its output is what you watch, and the
+// fresh/build toggles apply to one start only (a lingering fresh would wipe again).
+function withDispatch(result) {
+  if (result.action?.type !== 'run') return result;
+  const state = { ...result.state, view: 'ops' };
+  if (result.action.script === 'start-cluster.sh') {
+    state.fresh = false;
+    state.build = false;
+  }
+  return { ...result, state };
+}
+
 export function handleKey(state, key, ctx) {
+  return withDispatch(reduceKey(state, key, ctx));
+}
+
+function reduceKey(state, key, ctx) {
   const { busy = false, config, snapshot } = ctx;
   const next = { ...state, message: null };
 
@@ -659,12 +675,25 @@ function operationHeader(op, { color, now, spinnerFrame }) {
   return ` OPERATION  ${paint(color, 'red', '✕')} ${op.label} · exit ${op.code} · ${duration}  ${command}`;
 }
 
+// Say which run the visible log lines belong to, so an old tail is never mistaken for live.
+function memberLogNote(snapshot, memberId, mtimeMs, { color, now }) {
+  if (mtimeMs === null) return '';
+  const member = snapshot.members.find((entry) => entry.id === memberId);
+  const lastWrite = paint(color, 'dim', ` · last write ${clock(mtimeMs)} (${formatDuration(now - mtimeMs)} ago)`);
+  if (!member || !member.alive) return `${paint(color, 'yellow', ' · member down: previous run')}${lastWrite}`;
+  if (member.uptimeMs !== null && mtimeMs < now - member.uptimeMs) {
+    return `${paint(color, 'yellow', ' · earlier run; nothing from the current process yet')}${lastWrite}`;
+  }
+  return lastWrite;
+}
+
 export function renderConsole(view) {
   const {
     color = false,
     config,
     height = 30,
     memberLog = [],
+    memberLogMtime = null,
     now = Date.now(),
     op = null,
     output = [],
@@ -681,7 +710,7 @@ export function renderConsole(view) {
   let header;
   let source;
   if (ui.view === 'member') {
-    header = ` LOG  ${paint(color, 'bold', `validator-${ui.selected}.log`)} ${paint(color, 'dim', `(tail · ${tildePath(config.logDir, config.home)})`)}`;
+    header = ` LOG  ${paint(color, 'bold', `validator-${ui.selected}.log`)}${memberLogNote(snapshot, ui.selected, memberLogMtime, { color, now })}  ${paint(color, 'dim', tildePath(config.logDir, config.home))}`;
     source = memberLog;
   } else if (idle) {
     ({ header, lines: source } = idle);
@@ -725,13 +754,14 @@ async function tailLines(file, maxLines) {
   let handle;
   try {
     handle = await open(file, 'r');
-    const { size } = await handle.stat();
+    const { mtimeMs, size } = await handle.stat();
     const length = Math.min(size, 64 * 1024);
     const buffer = Buffer.alloc(length);
     await handle.read(buffer, 0, length, size - length);
-    return buffer.toString('utf8').split(/\r?\n|\r/).map(stripAnsi).filter((line) => line.length > 0).slice(-maxLines);
+    const lines = buffer.toString('utf8').split(/\r?\n|\r/).map(stripAnsi).filter((line) => line.length > 0).slice(-maxLines);
+    return { lines: lines.length > 0 ? lines : ['(log is empty: reset by a fresh start, or nothing written yet)'], mtimeMs };
   } catch (_error) {
-    return [`(no log yet: ${file})`];
+    return { lines: [`(no log yet: ${file})`], mtimeMs: null };
   } finally {
     await handle?.close();
   }
@@ -759,6 +789,7 @@ export async function runMockConsole(options = {}, { repoRoot, env = process.env
   let op = null;
   let child = null;
   let memberLog = [];
+  let memberLogMtime = null;
   let spinnerFrame = 0;
   let polling = false;
   let pendingPartial = '';
@@ -775,7 +806,7 @@ export async function runMockConsole(options = {}, { repoRoot, env = process.env
     const width = stdout.columns || 100;
     const height = stdout.rows || 30;
     const lines = renderConsole({
-      color, config, height, memberLog, now: Date.now(), op, output, snapshot, spinnerFrame, ui, width,
+      color, config, height, memberLog, memberLogMtime, now: Date.now(), op, output, snapshot, spinnerFrame, ui, width,
     }).slice(0, height);
     // Erase each line before writing it: with autowrap off the cursor parks on the last
     // column, so a trailing erase-to-end-of-line would delete a full-width line's last cell.
@@ -788,7 +819,9 @@ export async function runMockConsole(options = {}, { repoRoot, env = process.env
     try {
       config = await resolveConsoleConfig({ env, options, repoRoot });
       snapshot = await probeCluster(config);
-      if (ui.view === 'member') memberLog = await tailLines(path.join(config.logDir, `validator-${ui.selected}.log`), 200);
+      if (ui.view === 'member') {
+        ({ lines: memberLog, mtimeMs: memberLogMtime } = await tailLines(path.join(config.logDir, `validator-${ui.selected}.log`), 200));
+      }
     } catch (error) {
       ui = { ...ui, message: { text: `probe failed: ${error.message}`, tone: 'red' } };
     } finally {
