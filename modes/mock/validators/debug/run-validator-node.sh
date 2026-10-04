@@ -100,7 +100,9 @@ CLUSTER_RUNTIME_ROOT="${CLUSTER_RUNTIME_ROOT:-$HOME/oak-chain}"
 EXTRA_JAVA_OPTS="${EXTRA_JAVA_OPTS:-}"
 BLOCKCHAIN_MODE="${OAK_BLOCKCHAIN_MODE:-mock}"
 OAK_CLUSTER_ENV="${OAK_CLUSTER_ENV:-test}"
-OAK_CLUSTER_SESSION_TIMEOUT_MINUTES="${OAK_CLUSTER_SESSION_TIMEOUT_MINUTES:-1}"
+# Aeron session timeout. Seconds win over minutes in the runtime; our ingress clients keep alive every 1 s.
+OAK_CLUSTER_SESSION_TIMEOUT_SECONDS="${OAK_CLUSTER_SESSION_TIMEOUT_SECONDS:-30}"
+OAK_CLUSTER_SESSION_TIMEOUT_MINUTES="${OAK_CLUSTER_SESSION_TIMEOUT_MINUTES:-}"
 
 # Ports: default 8090, 8092, 8094 for the legacy single-cluster flow.
 HTTP_PORT=$((HTTP_BASE_PORT + (NODE_ID * HTTP_PORT_STEP)))
@@ -137,9 +139,11 @@ IPFS_API_ENDPOINT="${IPFS_API_ENDPOINT:-/ip4/127.0.0.1/tcp/5001}"
 IPFS_GATEWAY_BASE="${IPFS_GATEWAY_BASE:-http://127.0.0.1:8099/ipfs/}"
 IPFS_LOCAL_GATEWAY_BASE="${IPFS_LOCAL_GATEWAY_BASE:-http://127.0.0.1:8099/ipfs/}"
 HEALTH_PEER_PROBE_MODE="${OAK_HEALTH_PEER_PROBE_MODE:-http}"
-AERON_SOCKET_SNDBUF="${AERON_SOCKET_SNDBUF:-16384}"
-AERON_SOCKET_RCVBUF="${AERON_SOCKET_RCVBUF:-16384}"
-AERON_RCV_INITIAL_WINDOW="${AERON_RCV_INITIAL_WINDOW:-16384}"
+# 1 MiB socket buffers and receive window (macOS allows up to kern.ipc.maxsockbuf, 8 MiB). Aeron refuses
+# to start when SO_RCVBUF is smaller than the initial window, so keep the window <= the receive buffer.
+AERON_SOCKET_SNDBUF="${AERON_SOCKET_SNDBUF:-1048576}"
+AERON_SOCKET_RCVBUF="${AERON_SOCKET_RCVBUF:-1048576}"
+AERON_RCV_INITIAL_WINDOW="${AERON_RCV_INITIAL_WINDOW:-1048576}"
 MOCK_EPOCH_DURATION_SECONDS="${OAK_MOCK_EPOCH_DURATION_SECONDS:-300}"
 PROPOSAL_BATCH_MAX="${OAK_PROPOSAL_BATCH_MAX:-25}"
 PROPOSAL_FINALIZATION_CHUNK_SIZE="${OAK_PROPOSAL_FINALIZATION_CHUNK_SIZE:-25}"
@@ -302,7 +306,7 @@ echo "Cluster Size: $AERON_CLUSTER_SIZE"
 echo "Aeron Base Port: $CLUSTER_BASE_PORT"
 echo "Mock Epoch Duration: ${MOCK_EPOCH_DURATION_SECONDS}s"
 echo "Cluster Environment: ${OAK_CLUSTER_ENV:-}"
-echo "Aeron Session Timeout Minutes: ${OAK_CLUSTER_SESSION_TIMEOUT_MINUTES:-}"
+echo "Aeron Session Timeout: ${OAK_CLUSTER_SESSION_TIMEOUT_SECONDS:-}s (minutes override: ${OAK_CLUSTER_SESSION_TIMEOUT_MINUTES:-none})"
 echo "Log File: $LOG_FILE"
 echo "Queue Tuning (target): persistence.enabled=$PROPOSAL_PERSISTENCE_ENABLED, flush.ms=$PROPOSAL_PERSISTENCE_FLUSH_MS, flush.batch=$PROPOSAL_PERSISTENCE_FLUSH_BATCH, batch.max=$PROPOSAL_BATCH_MAX, finalization.chunk.size=$PROPOSAL_FINALIZATION_CHUNK_SIZE, finalization.chunk.delay.ms=$PROPOSAL_FINALIZATION_CHUNK_DELAY_MS, max.pending.messages=$CONSENSUS_MAX_PENDING_MESSAGES, backpressure.timeout.ms=$CONSENSUS_BACKPRESSURE_TIMEOUT_MS"
 echo "Aeron Max Concurrent Sessions: $OAK_CLUSTER_MAX_CONCURRENT_SESSIONS"
@@ -363,6 +367,9 @@ if [ "${OAK_CLUSTER_MAX_CONCURRENT_SESSIONS:-0}" -gt 0 ] 2>/dev/null; then
 fi
 if [ -n "${OAK_CLUSTER_ENV:-}" ]; then
     aeron_session_jvm_args="$aeron_session_jvm_args -Doak.cluster.environment=$OAK_CLUSTER_ENV"
+fi
+if [ "${OAK_CLUSTER_SESSION_TIMEOUT_SECONDS:-0}" -gt 0 ] 2>/dev/null; then
+    aeron_session_jvm_args="$aeron_session_jvm_args -Doak.cluster.session.timeout.seconds=$OAK_CLUSTER_SESSION_TIMEOUT_SECONDS"
 fi
 if [ "${OAK_CLUSTER_SESSION_TIMEOUT_MINUTES:-0}" -gt 0 ] 2>/dev/null; then
     aeron_session_jvm_args="$aeron_session_jvm_args -Doak.cluster.session.timeout.minutes=$OAK_CLUSTER_SESSION_TIMEOUT_MINUTES"
