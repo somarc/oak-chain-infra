@@ -34,7 +34,7 @@ Accepted as form-urlencoded or multipart (`http/server/handlers/WriteProposalHan
 |---|---|
 | `walletAddress`, `proposalId`, `ethereumTxHash` | As for writes. The settlement call is `payDelete`, and the proof kind must be DELETE. |
 | `contentPath` | **Required.** |
-| `signature` | **Required.** **Target contract (decided): `personal_sign` over exactly `contentPath`**, matching the SDK's `signDeleteProposal`. **At `a7c3538730`:** the queued DELETE carries `message = ""` (`ProposalQueueManagerOptimized.java:1603`), so chain-backed verification is over the **empty string**, binding nothing. The runtime fix is on branch `fix/delete-signature-binds-content-path` (`2ae8d600e1`, unpushed). It verifies over `contentPath` at API entry (401) and in the verifier, both outside mock mode. Conformant clients sign `contentPath`, which is harmless in mock mode, where verification is skipped. |
+| `signature` | **Required.** **Target contract (decided): `personal_sign` over exactly `contentPath`**, matching the SDK's `signDeleteProposal`. **Before `2ae8d600e1`:** the queued DELETE carried `message = ""` (`ProposalQueueManagerOptimized.java:1603`), so chain-backed verification was over the **empty string**, binding nothing. Fixed in `2ae8d600e1` (on `feature/blockchain-aem-poc`). It verifies over `contentPath` at API entry (401) and in the verifier, both outside mock mode. Conformant clients sign `contentPath`, which is harmless in mock mode, where verification is skipped. |
 
 ## Known runtime gaps observed against valid transactions
 
@@ -42,14 +42,14 @@ These are runtime issues, not client errors. Conformant clients still hit them.
 
 - **Truncated values.** Replicated field extraction stops at the first escaped quote (`consensus/aeron/MessageDispatcher.java:576-595`). A valid `message` containing `"` is stored truncated on every validator, and the full message was what got signed.
 - **Per-node timestamps.** Apply writes local wall-clock `timestamp`, so stored properties differ per node.
+- **Packed DELETE stays in the head.** In Oak a delete is an append like any write (a revision without the node), so packing deletes with writes is legitimate, but the outcome depends on packing: a DELETE packed with writes from the same wallet is routed to `applyWrite` (`MessageDispatcher` batch loop ignores the item's `operation`), so the node stays in the head with `contentType=delete`, `message=""`, while the operation reports COMMITTED. Reproduced live by campaign `f1-mixed-batch` (6/6). See `cross-lane-issues/jackrabbit-oak-delete-in-multi-proposal-batch-replicated-as-write.md`.
+- **Concurrent writes share a path.** The leader names new nodes `<contentType>-<millis>` (`WriteProposalHandler.java:622`), so concurrent writes from one wallet/org/type in the same millisecond collide: all COMMITTED, only the last survives. Reproduced live by `f1-mixed-batch` (3/9 kept their value). Decided fix: `<contentType>-<millis>-<proposalId 8 hex>`. See `cross-lane-issues/jackrabbit-oak-concurrent-writes-share-millisecond-storage-path.md`.
 
 ## Conformant builder in this repo
 
 `src/tx.mjs` (CLI: `oak-chain tx key|write|delete|verify`) is the single builder that every script and the harness use.
 - **Proof against the runtime:** `test/tx.test.mjs` verifies its signatures with the validator jar's own `EthereumSignatureVerifier`, covering ASCII, empty, quotes, unicode, astral characters, content paths and long messages. It also covers wrong signers and wrong messages, which must be rejected.
 - **Test keys:** deterministic and public by design (`--index N`, or `--prefix HH` for a shard-local wallet). They exist only for test traffic.
-
-- **Delete replicated as a write.** A DELETE packed into a multi-proposal batch with writes from the same wallet is replicated and applied as a **write** (templateId 106 has no type). Confirmed from source, not yet reproduced live. See `cross-lane-issues/jackrabbit-oak-delete-in-multi-proposal-batch-replicated-as-write.md`.
 
 ## Open contract questions (owner: jackrabbit-oak)
 

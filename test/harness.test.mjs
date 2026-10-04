@@ -20,10 +20,13 @@ function json(body, status = 200, headers = {}) {
 }
 
 // In-memory 3-validator cluster. Follower writes redirect (307) to the leader; the leader
-// "commits" immediately; every node stores what `store(form)` returns.
-function fakeCluster({ leaderPort = 8094, store = (form) => Object.fromEntries(form), timestamps = () => 1 } = {}) {
+// "commits" immediately; every node stores what `store(form)` returns. `deleteAs: 'write'`
+// mimics a packed DELETE routed through applyWrite: the node stays, its message is rewritten.
+function fakeCluster({ deleteAs = 'remove', leaderPort = 8094, store = (form) => Object.fromEntries(form), timestamps = () => 1 } = {}) {
   const ports = [8090, 8092, 8094];
   const content = new Map();
+  const registered = new Set();
+  let pages = 0;
   const operations = new Map();
   const seen = [];
   const fetchImpl = async (url, init = {}) => {
@@ -39,11 +42,27 @@ function fakeCluster({ leaderPort = 8094, store = (form) => Object.fromEntries(f
       if (!isLeader) return new Response(null, { headers: { location: `http://localhost:${leaderPort}/v1/propose-write` }, status: 307 });
       const form = new URLSearchParams(String(init.body));
       const proposalId = form.get('proposalId');
-      const storagePath = `/oak-chain/test/${form.get('organization')}/content/page-${content.size + 1}`;
+      pages += 1;
+      const storagePath = `/oak-chain/test/${form.get('organization')}/content/page-${pages}`;
       const stored = store(form);
       content.set(storagePath, stored);
       operations.set(proposalId, { durabilityState: 'ACKED', sourceState: 'PROCESSED', state: 'COMMITTED' });
       return json({ operationId: proposalId, proposalId, storagePath }, 202);
+    }
+    if (target.pathname === '/v1/register-client') {
+      const form = new URLSearchParams(String(init.body));
+      registered.add(form.get('walletAddress').toLowerCase());
+      return json({ clientId: form.get('clientId'), status: 'registered' });
+    }
+    if (target.pathname === '/v1/propose-delete') {
+      if (!isLeader) return new Response(null, { headers: { location: `http://localhost:${leaderPort}/v1/propose-delete` }, status: 307 });
+      const form = new URLSearchParams(String(init.body));
+      if (!registered.has(form.get('walletAddress').toLowerCase())) return json({ error: 'Wallet not registered' }, 403);
+      const contentPath = form.get('contentPath');
+      if (deleteAs === 'write') content.set(contentPath, { ...content.get(contentPath), message: '' });
+      else content.delete(contentPath);
+      operations.set(form.get('proposalId'), { durabilityState: 'ACKED', sourceState: 'PROCESSED', state: 'COMMITTED' });
+      return json({ contentPath, operationId: form.get('proposalId'), proposalId: form.get('proposalId'), type: 'DELETE' }, 202);
     }
     if (target.pathname.startsWith('/v1/ops/operations/')) {
       if (!isLeader) return json({ error: 'Operation not found' }, 404);
@@ -151,18 +170,18 @@ test('http client follows 307 keeping method and body, and reports transport fai
 
 test('campaign definitions are well-formed and name known scenarios', async () => {
   const campaigns = await listCampaigns(repoRoot);
-  assert.deepEqual(campaigns.map((campaign) => campaign.id).sort(), ['f1-one-write', 'p0-preflight', 'reconcile-accepted']);
+  assert.deepEqual(campaigns.map((campaign) => campaign.id).sort(), ['f1-mixed-batch', 'f1-one-write', 'p0-preflight', 'reconcile-accepted']);
   for (const campaign of campaigns) {
     assert.match(campaign.riskClass, /^[AB]$/);
     assert.ok(campaign.charter.length > 0);
   }
 });
 
-async function runOneWrite(cluster) {
+async function runOneWrite(cluster, campaign = 'f1-one-write', options = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'oak-harness-run-'));
   const env = { CLUSTER_RUNTIME_ROOT: root, HOME: os.homedir(), OAK_VALIDATOR_HTTP_BASE_PORT: '8090', OPS_PROXY_PORT: '7' };
   try {
-    const result = await runCampaign('f1-one-write', { 'allow-class': 'B' }, { env, fetchImpl: cluster.fetchImpl, repoRoot });
+    const result = await runCampaign(campaign, { 'allow-class': 'B', ...options }, { env, fetchImpl: cluster.fetchImpl, repoRoot });
     const tsv = await readFile(path.join(result.dir, 'assertions.tsv'), 'utf8');
     const manifest = JSON.parse(await readFile(path.join(result.dir, 'manifest.json'), 'utf8'));
     const ledger = (await readFile(path.join(result.dir, 'ledger.ndjson'), 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
@@ -202,4 +221,34 @@ test('F1-01 fails on server-side truncation and on per-node apply timestamps', a
   assert.equal(rows['F1-01b value-fidelity'], 'FAIL', 'quoted message is truncated');
   assert.equal(rows['F1-01 strict-equality'], 'FAIL', 'per-node timestamps break strict equality');
   assert.equal(rows['F1-01 semantic-equality'], 'PASS', 'semantic comparison is only a diagnostic');
+});
+
+function assertionRows(tsv) {
+  return Object.fromEntries(tsv.trim().split('\n').slice(1).map((line) => {
+    const cells = line.split('\t');
+    return [`${cells[0]} ${cells[1]}`, cells[5]];
+  }));
+}
+
+test('F1-02m passes when every packed delete leaves the head and every write holds its value', async () => {
+  const cluster = fakeCluster({ store: storeProperties });
+  const { formatted, ledger, result } = await runOneWrite(cluster, 'f1-mixed-batch');
+  assert.equal(result.summary.status, STATUS.PASS, formatted);
+  assert.deepEqual(ledger.map((row) => row.kind).filter((kind, index, kinds) => kinds.indexOf(kind) === index), ['register', 'write', 'delete']);
+  const deletes = ledger.filter((row) => row.kind === 'delete');
+  assert.equal(deletes.length, 6);
+  assert.equal(ledger.filter((row) => row.kind === 'write').length, 6 + 9, '6 setup writes, then 3 per round');
+  assert.ok(deletes.every((row) => recoverSigner(row.storagePath, row.signature) === row.wallet), 'deletes are signed over contentPath');
+  assert.ok(deletes.every((row) => row.leaderAtSubmit === 'http://127.0.0.1:8094' && row.hops.length === 0), 'bursts go straight to the resolved leader');
+  assert.equal([...cluster.content.keys()].length, 9, 'only the burst writes remain');
+});
+
+test('F1-02m fails when a packed delete is routed through applyWrite and the node stays in the head', async () => {
+  const { result, tsv } = await runOneWrite(fakeCluster({ deleteAs: 'write', store: storeProperties }), 'f1-mixed-batch', { 'convergence-seconds': '1', rounds: '1' });
+  assert.equal(result.summary.status, STATUS.FAIL);
+  const rows = assertionRows(tsv);
+  assert.equal(rows['F1-02m burst-terminal'], 'PASS', 'the runtime reports the delete COMMITTED');
+  assert.equal(rows['F1-02m removed-from-head'], 'FAIL');
+  assert.equal(rows['F1-02m delete-routed-as-write'], 'FAIL');
+  assert.equal(rows['F1-02m writes-value-fidelity'], 'PASS');
 });

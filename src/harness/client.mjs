@@ -8,7 +8,7 @@
 
 import { performance } from 'node:perf_hooks';
 
-import { buildWrite, newProposalId as newTxProposalId, testKey } from '../tx.mjs';
+import { buildDelete, buildWrite, newProposalId as newTxProposalId, testKey } from '../tx.mjs';
 import { findLeader } from './observe.mjs';
 
 export const OUTCOME = Object.freeze({
@@ -50,30 +50,55 @@ function truncate(text, max = 2_000) {
   return value.length > max ? `${value.slice(0, max)}…` : value;
 }
 
-export async function submitWrite(http, target, run, { contentType = 'page', message, organization, proposalId = newProposalId(), signer }) {
-  const leader = await findLeader(http, target);
+// One POST to the leader (or `leaderUrl` when the caller already resolved it, so a burst can
+// leave back to back), recorded as one ledger row.
+async function submitSigned(http, target, run, { endpoint, form, kind, leaderUrl, record }) {
+  const leader = leaderUrl ? { url: leaderUrl } : await findLeader(http, target);
   const base = leader?.url ?? target.nodes[0].url;
-  const form = buildWrite({ contentType, key: signer.privateKey, message, organization, proposalId });
   const invokedAt = new Date().toISOString();
   const started = performance.now();
-  const response = await http.request(`${base}/v1/propose-write`, { form, method: 'POST', timeout: 30_000 });
+  const response = await http.request(`${base}${endpoint}`, { form, method: 'POST', timeout: 30_000 });
   const row = {
     body: truncate(response.text),
     error: response.error,
     hops: response.hops,
     httpStatus: response.status,
     invokedAt,
-    kind: 'write',
+    kind,
     latencyMs: Math.round(performance.now() - started),
     leaderAtSubmit: leader?.url ?? null,
-    message,
     operationId: response.json?.operationId ?? null,
-    organization,
-    proposalId,
+    proposalId: form.proposalId,
     signature: form.signature,
-    storagePath: response.json?.storagePath ?? null,
     wallet: form.walletAddress,
+    ...record,
+    storagePath: response.json?.storagePath ?? record.storagePath ?? null,
   };
+  await run.appendLedger(row);
+  return row;
+}
+
+export async function submitWrite(http, target, run, { contentType = 'page', leaderUrl, message, organization, proposalId = newProposalId(), signer }) {
+  const form = buildWrite({ contentType, key: signer.privateKey, message, organization, proposalId });
+  return submitSigned(http, target, run, { endpoint: '/v1/propose-write', form, kind: 'write', leaderUrl, record: { message, organization } });
+}
+
+// Deletes sign contentPath and need a registered wallet (DeleteProposalHandler).
+export async function submitDelete(http, target, run, { contentPath, leaderUrl, proposalId = newProposalId(), signer }) {
+  const form = buildDelete({ contentPath, key: signer.privateKey, proposalId });
+  return submitSigned(http, target, run, { endpoint: '/v1/propose-delete', form, kind: 'delete', leaderUrl, record: { storagePath: contentPath } });
+}
+
+// The runtime reads no signature on registration (RegistrationHandler); it maps clientId to
+// wallet and answers 409 if a clientId returns with another wallet, so the id names the wallet.
+export async function registerWallet(http, target, run, signer) {
+  const leader = await findLeader(http, target);
+  const base = leader?.url ?? target.nodes[0].url;
+  const clientId = `harness-${signer.address.slice(2, 10)}`;
+  const response = await http.request(`${base}/v1/register-client`, {
+    form: { clientId, clientUrl: `http://${clientId}.local`, walletAddress: signer.address }, method: 'POST', timeout: 15_000,
+  });
+  const row = { body: truncate(response.text), clientId, error: response.error, httpStatus: response.status, kind: 'register', wallet: signer.address };
   await run.appendLedger(row);
   return row;
 }

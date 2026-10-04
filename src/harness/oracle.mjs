@@ -67,3 +67,16 @@ export async function waitPresentEverywhere(http, target, storagePath, { deadlin
   }
   return { elapsedMs: Date.now() - started, present: false, reads };
 }
+
+// A delete appends a revision without the node, so the head read (/api/explore) answers 404 on
+// every validator. Only 404 counts as absent; a transport failure (status 0) is not evidence.
+export async function waitAbsentEverywhere(http, target, storagePath, { deadlineMs = 60_000, intervalMs = 1_000, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) } = {}) {
+  const started = Date.now();
+  let reads = [];
+  while (Date.now() - started <= deadlineMs) {
+    reads = await readEverywhere(http, target, storagePath);
+    if (reads.every((read) => read.status === 404)) return { absent: true, elapsedMs: Date.now() - started, reads };
+    await sleep(intervalMs);
+  }
+  return { absent: false, elapsedMs: Date.now() - started, reads, unreachable: reads.some((read) => read.status === 0) };
+}

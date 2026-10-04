@@ -12,8 +12,11 @@ import { authorizeRiskClass, captureProvenance, describeTarget, processState, re
 const CAMPAIGN_DIR = 'modes/mock/campaigns';
 const PARAM_OPTIONS = {
   'concurrency': 'concurrency',
+  'convergence-seconds': 'convergenceSeconds',
   'idle-seconds': 'idleSeconds',
+  'rounds': 'rounds',
   'sample': 'sample',
+  'terminal-seconds': 'terminalSeconds',
 };
 
 function campaignDir(repoRoot) {

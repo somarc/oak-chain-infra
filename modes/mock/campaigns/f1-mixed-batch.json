@@ -1,0 +1,8 @@
+{
+  "id": "f1-mixed-batch",
+  "title": "F1-02 (packing) one wallet's writes and deletes in one packing window: every delete leaves the head, every write holds its value",
+  "riskClass": "B",
+  "charter": ["F1-02"],
+  "scenario": "mixed-batch",
+  "params": { "rounds": 3, "deletesPerRound": 2, "terminalSeconds": 90, "convergenceSeconds": 60 }
+}

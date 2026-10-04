@@ -3,10 +3,10 @@
 
 import { randomBytes } from 'node:crypto';
 
-import { classifyOperation, harnessSigner, OUTCOME, reconcile, submitWrite } from './client.mjs';
+import { classifyOperation, harnessSigner, OUTCOME, reconcile, registerWallet, submitDelete, submitWrite } from './client.mjs';
 import { STATUS } from './evidence.mjs';
 import { findLeader, leadersIn, sampleCluster } from './observe.mjs';
-import { compareAcrossNodes, compareExpected, readEverywhere, VOLATILE_PROPERTIES, waitPresentEverywhere } from './oracle.mjs';
+import { compareAcrossNodes, compareExpected, readEverywhere, VOLATILE_PROPERTIES, waitAbsentEverywhere, waitPresentEverywhere } from './oracle.mjs';
 import { processState } from './target.mjs';
 
 const pass = (ok) => (ok ? STATUS.PASS : STATUS.FAIL);
@@ -335,7 +335,142 @@ export async function reconcileAccepted({ acceptedRecords, http, run, target }, 
   });
 }
 
+// ---------------------------------------------------------------------------------------
+// F1-02 (packing subset): one wallet's writes and deletes inside one packing window. In Oak a
+// delete is an append like any write (a revision without the node), so packing them together
+// is legitimate; the state transition must not depend on packing. Every committed delete must
+// leave its node out of the head on every validator; every write must hold its exact value.
+// Batch membership is not exposed by the API, so concurrent rounds raise the odds that a burst
+// shares one hold window (AdaptivePackingBuffer, 25–500 ms); the end state is asserted either way.
+
+function outcomeStatus(verdicts) {
+  if (verdicts.some((verdict) => verdict.outcome === OUTCOME.REJECTED || verdict.outcome === OUTCOME.FAILED)) return STATUS.FAIL;
+  return verdicts.some((verdict) => verdict.outcome === OUTCOME.UNKNOWN) ? STATUS.UNKNOWN : STATUS.PASS;
+}
+
+export async function mixedBatch({ http, run, seed, target }, params) {
+  const scenarioId = 'F1-02m';
+  const rounds = Number(params.rounds ?? 3);
+  const deletesPerRound = Number(params.deletesPerRound ?? 2);
+  const terminalMs = Number(params.terminalSeconds ?? 90) * 1_000;
+  const convergenceMs = Number(params.convergenceSeconds ?? 60) * 1_000;
+  const signer = harnessSigner(seed);
+  const organization = `Harness${randomBytes(3).toString('hex')}`;
+  const expectedFor = (row) => ({ contentType: 'page', message: row.message, 'oak:proposalId': row.proposalId, organization, wallet: signer.address.toLowerCase() });
+  await run.event('scenario.start', { deletesPerRound, rounds, scenarioId });
+
+  const registration = await registerWallet(http, target, run, signer);
+  const registered = registration.httpStatus >= 200 && registration.httpStatus < 300;
+  run.assert({
+    assertionId: 'wallet-registered', evidence: 'ledger.ndjson', expected: 'register-client 2xx (deletes need a registered wallet)',
+    observed: `http ${registration.httpStatus}${registration.error ? ` (${registration.error})` : ''}`, scenarioId,
+    status: registration.httpStatus === 0 ? STATUS.UNKNOWN : pass(registered),
+  });
+  if (!registered) return;
+
+  // Setup, serially: the nodes the bursts will delete, committed and visible everywhere first.
+  const victimCount = rounds * deletesPerRound;
+  const victims = [];
+  const setupVerdicts = [];
+  for (let index = 0; index < victimCount; index += 1) {
+    const row = await submitWrite(http, target, run, { message: `oak harness ${scenarioId} setup ${index} ${run.id}`, organization, signer });
+    if (!row.operationId || !row.storagePath) {
+      setupVerdicts.push({ outcome: row.httpStatus === 0 ? OUTCOME.UNKNOWN : OUTCOME.REJECTED });
+      continue;
+    }
+    const verdict = await reconcile(http, target, run, row.operationId, { deadlineMs: terminalMs });
+    setupVerdicts.push(verdict);
+    if (verdict.outcome !== OUTCOME.COMMITTED) continue;
+    const visible = await waitPresentEverywhere(http, target, row.storagePath, { deadlineMs: convergenceMs });
+    if (visible.present) victims.push(row);
+    else setupVerdicts.push({ outcome: OUTCOME.FAILED });
+  }
+  run.assert({
+    assertionId: 'setup-committed', evidence: 'ledger.ndjson', expected: `${victimCount} setup writes COMMITTED and visible on all ${target.size} validators`,
+    observed: `${victims.length}/${victimCount}`, scenarioId, status: outcomeStatus(setupVerdicts),
+  });
+  if (victims.length !== victimCount) return;
+
+  // Bursts: write, delete, write, delete, …, write, all in flight at once to one leader.
+  const ops = [];
+  for (let round = 0; round < rounds; round += 1) {
+    const leader = await findLeader(http, target);
+    const steps = [];
+    for (let k = 0; k < deletesPerRound; k += 1) {
+      steps.push({ kind: 'write', message: `oak harness ${scenarioId} r${round} w${k} ${run.id}` });
+      steps.push({ kind: 'delete', victim: victims[round * deletesPerRound + k] });
+    }
+    steps.push({ kind: 'write', message: `oak harness ${scenarioId} r${round} w${deletesPerRound} ${run.id}` });
+    const rows = await Promise.all(steps.map((step) => (step.kind === 'write'
+      ? submitWrite(http, target, run, { leaderUrl: leader?.url, message: step.message, organization, signer })
+      : submitDelete(http, target, run, { contentPath: step.victim.storagePath, leaderUrl: leader?.url, signer }))));
+    rows.forEach((row, index) => ops.push({ ...steps[index], round, row }));
+    await run.event('burst.sent', { leader: leader?.url ?? null, round, statuses: rows.map((row) => `${row.kind}:${row.httpStatus}`) });
+  }
+
+  const isAccepted = (op) => (op.row.httpStatus === 200 || op.row.httpStatus === 202) && Boolean(op.row.operationId);
+  const accepted = ops.filter(isAccepted);
+  const refused = ops.filter((op) => !isAccepted(op));
+  run.assert({
+    assertionId: 'burst-accepted', evidence: 'ledger.ndjson', expected: `all ${ops.length} burst operations accepted (202)`,
+    observed: `${accepted.length}/${ops.length}${refused.length ? `; ${brief(refused.map((op) => `${op.kind} http ${op.row.httpStatus}`))}` : ''}`,
+    scenarioId, status: refused.some((op) => op.row.httpStatus === 0) ? STATUS.UNKNOWN : pass(refused.length === 0),
+  });
+
+  const verdicts = await pool(accepted, 6, (op) => reconcile(http, target, run, op.row.operationId, { deadlineMs: terminalMs }));
+  run.assert({
+    assertionId: 'burst-terminal', evidence: 'timeline.ndjson', expected: `every accepted burst operation COMMITTED within ${terminalMs / 1_000}s`,
+    observed: Object.values(OUTCOME).map((outcome) => `${outcome}=${verdicts.filter((verdict) => verdict.outcome === outcome).length}`).join(' '),
+    scenarioId, status: accepted.length === 0 ? STATUS.UNKNOWN : outcomeStatus(verdicts),
+  });
+
+  const committed = accepted.filter((_, index) => verdicts[index].outcome === OUTCOME.COMMITTED);
+  const deletes = committed.filter((op) => op.kind === 'delete');
+  const writes = committed.filter((op) => op.kind === 'write');
+  const deleteReads = await pool(deletes, 6, (op) => waitAbsentEverywhere(http, target, op.victim.storagePath, { deadlineMs: convergenceMs }));
+  const writeReads = await pool(writes, 6, (op) => waitPresentEverywhere(http, target, op.row.storagePath, { deadlineMs: convergenceMs }));
+  const evidence = `reads/${scenarioId}.json`;
+  await run.writeJson(evidence, {
+    deletes: deletes.map((op, index) => ({ proposalId: op.row.proposalId, round: op.round, storagePath: op.victim.storagePath, ...deleteReads[index] })),
+    writes: writes.map((op, index) => ({ proposalId: op.row.proposalId, round: op.round, storagePath: op.row.storagePath, ...writeReads[index] })),
+  });
+
+  const lingering = deletes.map((op, index) => ({ op, read: deleteReads[index] })).filter(({ read }) => !read.absent);
+  const presentOn = (reads) => reads.filter((read) => read.status === 200).map((read) => read.id).join(',');
+  run.assert({
+    assertionId: 'removed-from-head', evidence, expected: `each committed delete's node absent from the head (404) on all ${target.size} validators within ${convergenceMs / 1_000}s`,
+    note: 'a delete appends a revision without the node; the outcome must not depend on packing',
+    observed: `${deletes.length - lingering.length}/${deletes.length} removed${lingering.length ? `; still in head: ${brief(lingering.map(({ op, read }) => `${op.victim.storagePath} on ${presentOn(read.reads)}`))}` : ''}`,
+    scenarioId, status: deletes.length === 0 ? STATUS.UNKNOWN : (lingering.length === 0 ? STATUS.PASS : (lingering.every(({ read }) => read.unreachable) ? STATUS.UNKNOWN : STATUS.FAIL)),
+  });
+  const rewritten = lingering.filter(({ op, read }) => read.reads.some((r) => r.status === 200 && r.properties && r.properties.message !== op.victim.message));
+  run.assert({
+    assertionId: 'delete-routed-as-write', evidence, expected: 'no deleted node left in the head with properties rewritten by the delete',
+    kind: 'diagnostic', note: 'signature of a packed DELETE applied through applyWrite (templateId 106 item routed by default)',
+    observed: `${rewritten.length} rewritten of ${lingering.length} still in head`, scenarioId, status: pass(rewritten.length === 0),
+  });
+
+  const fidelity = writes.map((op, index) => (writeReads[index].present
+    ? compareExpected(writeReads[index].reads, expectedFor(op.row))
+    : { equal: false, mismatches: [{ expected: 'present', id: presentOn(writeReads[index].reads) || '-', name: '(node)', observed: 'missing somewhere' }] }));
+  const mismatches = fidelity.flatMap((result) => result.mismatches);
+  run.assert({
+    assertionId: 'writes-value-fidelity', evidence, expected: 'each committed burst write present on every validator with exactly the submitted values',
+    observed: `${fidelity.filter((result) => result.equal).length}/${writes.length}${mismatches.length ? `; ${brief(mismatches.map((m) => `node ${m.id} ${m.name}: expected ${JSON.stringify(m.expected)} got ${JSON.stringify(m.observed)}`))}` : ''}`,
+    scenarioId, status: writes.length === 0 ? STATUS.UNKNOWN : pass(mismatches.length === 0),
+  });
+  const strict = writes.map((_, index) => compareAcrossNodes(writeReads[index].reads));
+  const differing = [...new Set(strict.flatMap((result) => result.differing.map((entry) => entry.name)))];
+  run.assert({
+    assertionId: 'strict-equality', evidence, expected: 'every property of every burst write identical across validators',
+    note: differing.length > 0 && differing.every((name) => VOLATILE_PROPERTIES.includes(name)) ? 'only per-node apply timestamps differ (orientation §12 item 1)' : '',
+    observed: `${strict.filter((result) => result.equal).length}/${writes.length} identical${differing.length ? `; differing ${differing.join(',')}` : ''}`,
+    scenarioId, status: writes.length === 0 ? STATUS.UNKNOWN : pass(strict.every((result) => result.equal)),
+  });
+}
+
 export const SCENARIOS = Object.freeze({
+  'mixed-batch': mixedBatch,
   'one-write': oneWrite,
   preflight,
   'reconcile-accepted': reconcileAccepted,

@@ -817,7 +817,7 @@ async function runCampaignCommand(verb, name, options) {
     return;
   }
   if (verb !== 'run' || !name) {
-    throw new Error('Usage: oak-chain mock campaign list | oak-chain mock campaign run <name> [--allow-class B] [--allow-live-root] [--runtime-root PATH] [--runs-dir PATH] [--accepted DIR]');
+    throw new Error('Usage: oak-chain mock campaign list | oak-chain mock campaign run <name> [--allow-class B] [--allow-live-root] [--runtime-root PATH] [--runs-dir PATH] [--accepted DIR] [--rounds N] [--terminal-seconds N] [--convergence-seconds N]');
   }
   const result = await runCampaign(name, options, {
     log: (line) => process.stderr.write(`${line}\n`),
@@ -849,7 +849,7 @@ function printHelp() {
   println('  oak-chain mock up|down|status [--dry-run] [-- <script args...>]');
   println('  oak-chain mock console [--runtime-root PATH] [--cluster-size 3|5] [--lifecycle-dir PATH] [--once]');
   println('  oak-chain mock campaign list');
-  println('  oak-chain mock campaign run <name> [--allow-class B] [--allow-live-root] [--runtime-root PATH] [--runs-dir PATH] [--accepted DIR]');
+  println('  oak-chain mock campaign run <name> [--allow-class B] [--allow-live-root] [--runtime-root PATH] [--runs-dir PATH] [--accepted DIR] [--rounds N] [--terminal-seconds N] [--convergence-seconds N]');
   println('  oak-chain tx key|write|delete|verify ...   Conformant signed transactions (modes/mock/TRANSACTION-CONTRACT.md)');
   println('  oak-chain mock verify smoke|binary|surfaces-single [--dry-run] [-- <script args...>]');
   println('  oak-chain lab 3x2 up|down|status [--dry-run] [-- <script args...>]');

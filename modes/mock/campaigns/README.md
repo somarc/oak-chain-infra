@@ -9,12 +9,14 @@ oak-chain mock campaign list
 oak-chain mock campaign run p0-preflight                                            # class A, read-only
 oak-chain mock campaign run reconcile-accepted --accepted <load-run>/<name>-accepted-<ts>   # class A
 oak-chain mock campaign run f1-one-write --allow-class B [--allow-live-root]         # class B, 2 writes
+oak-chain mock campaign run f1-mixed-batch --allow-class B [--allow-live-root]       # class B, 21 ops
 ```
 
 | Campaign | Class | What it proves |
 |---|---|---|
 | `p0-preflight` | A | **Provenance:** jar SHA-256, repo HEADs and dirty state, every process started after the jar was built, OSGi config captured. **Process identity:** each pid file names the process serving its port. **Leader and quorum:** one agreed leader across rounds, full membership, reachability and quorum. **Role parity:** the role matches across `/health`, consensus and Aeron, and Prometheus agrees. **Idle check:** a short idle window. |
 | `f1-one-write` | B | **F1-01:** one plain write is accepted, then COMMITTED (durability ACKED). It is present on every validator, with the exact submitted values, and is strictly identical across nodes. **F1-01b:** the same checks for a value containing quotes, backslashes, unicode and form-reserved characters. |
+| `f1-mixed-batch` | B | **F1-02 (packing):** one registered wallet commits 6 setup writes, then fires 3 rounds of write, delete, write, delete, write concurrently at the leader so they share a packing window. In Oak a delete is an append without the node, so packing is legitimate; the outcome must not depend on it. Every committed delete's node is absent from the head (404) on every validator, and every burst write holds exactly its submitted values. The API does not expose batch membership, so the end state is asserted either way. `--rounds`, `--terminal-seconds` and `--convergence-seconds` override the parameters. |
 | `reconcile-accepted` | A | Every write a load run reported as accepted (from `CAPTURE_WRITE_ACCEPTS=true`) reached a terminal outcome. Each one is present on every validator, carries the right proposal identity, and is strictly identical across nodes. |
 
 **Rules**
