@@ -15,10 +15,19 @@ Validator-only local operations for Oak Chain mock mode.
   - Optional `--build` compiles `oak-segment-consensus` and any optional validator-side modules present in the current `jackrabbit-oak` branch before launch.
   - Optional `--mock-epoch-seconds N` sets mock-mode GC epoch duration (default 300s); Beacon telemetry stays local and follows the Sepolia clock shape.
   - Waits for IPFS API readiness before launching validators.
+  - Writes `$PID_DIR/cluster-launch.env` (size, ports, Aeron dirs) so single members can later be restarted with identical membership.
   - Auto-starts IPFS daemon by default when API is unavailable (`AUTO_START_IPFS=true`).
   - Starts validator failure watchdog by default (`ENABLE_WATCHDOG=true`, `--no-watchdog` to disable).
   - Also starts OPS proxy adapter from `oak-chain-edge-worker`:
     - `OPS_MOCK_MODE=proxy OPS_UPSTREAM_BASE=http://127.0.0.1:8090 node src/ops-api-worker.mjs`
+- `lifecycle/console.sh` (`oak-chain mock console`)
+  - Interactive console: start/stop the cluster, start/stop/kill/restart single members, live member, quorum and service status.
+  - Every action runs a lifecycle script; destructive actions and quorum-breaking member stops ask first.
+- `lifecycle/member.sh start|stop|kill|restart|status <member-id>`
+  - Per-member lifecycle. Members boot independently inside a static Aeron membership, so stopping one never shrinks the cluster.
+  - `start` clears only that member's Aeron media-driver dir; cluster/archive state is kept so the member catches up from its peers.
+  - Reads cluster size, ports and Aeron dirs from `$PID_DIR/cluster-launch.env` (written by `start-cluster.sh`) and refuses to start a member if your environment's membership differs.
+  - Only signals a pid whose command line names that member's store directory, so a stale or reused pid is never killed.
 - `lifecycle/stop-cluster.sh`
   - Stops validator nodes 0/1/2 and OPS proxy using PID files.
   - Stops validator failure watchdog.

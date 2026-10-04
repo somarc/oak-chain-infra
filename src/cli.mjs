@@ -4,6 +4,7 @@ import { constants as fsConstants } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { runMockConsole } from './mock-console.mjs';
 import { runOpsBoard } from './ops-tui.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -760,7 +761,7 @@ async function runMockCommand(action, third, passthrough, dryRun) {
   } else if (action === 'incident') {
     throw new Error('Incident triage moved under lab. Use oak-chain lab incident triage.');
   } else {
-    throw new Error('Usage: oak-chain mock up|down|status | oak-chain mock verify smoke|binary|surfaces-single');
+    throw new Error('Usage: oak-chain mock up|down|status|console | oak-chain mock verify smoke|binary|surfaces-single');
   }
 
   if (!candidates || candidates.length === 0) {
@@ -824,6 +825,7 @@ function printHelp() {
   println('  oak-chain doctor [--base-url URL] [--peer URL]');
   println('  oak-chain ops board [--ops-url URL] [--interval-ms N] [--once]');
   println('  oak-chain mock up|down|status [--dry-run] [-- <script args...>]');
+  println('  oak-chain mock console [--runtime-root PATH] [--cluster-size 3|5] [--lifecycle-dir PATH] [--once]');
   println('  oak-chain mock verify smoke|binary|surfaces-single [--dry-run] [-- <script args...>]');
   println('  oak-chain lab 3x2 up|down|status [--dry-run] [-- <script args...>]');
   println('  oak-chain lab verify surfaces-3x2|staircase [--dry-run] [-- <script args...>]');
@@ -845,6 +847,8 @@ function printHelp() {
   println('  --interval-ms N     OPS board refresh interval (default 2000).');
   println('  --runtime-root PATH Local runtime root used for mock log aggregation.');
   println('  --no-local-logs     Disable local active-log aggregation.');
+  println('  --cluster-size N    Mock console: member count (3 or 5); overrides env and the launch record.');
+  println('  --lifecycle-dir P   Mock console: lifecycle scripts to drive (default modes/mock/validators/lifecycle).');
   println('  --color             Force ANSI colour, including one-shot output.');
   println('  --no-color          Disable ANSI colour (also honors NO_COLOR).');
   println('  -h, --help          Show this help.');
@@ -943,6 +947,11 @@ export async function main(argv = process.argv.slice(2)) {
 
   if (group === 'ops' && action === 'board') {
     await runOpsBoard(parsed.options);
+    return;
+  }
+
+  if (group === 'mock' && action === 'console') {
+    await runMockConsole(parsed.options, { repoRoot: REPO_ROOT });
     return;
   }
 

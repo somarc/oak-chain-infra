@@ -26,6 +26,15 @@ For mock-local operation only, it also tails bounded portions of active logs und
 
 The first slice is intentionally read-only. Start/stop remains explicit through `oak-chain mock up|down|status`, which continues to delegate to the proven shell scripts.
 
+## Mock-Local Console
+
+`oak-chain mock console` is the mock-local exception to read-only: an interactive console that starts and stops the cluster and stops, starts, kills or restarts single members. It keeps the same boundary:
+
+- Every action runs a lifecycle script (`start-cluster.sh`, `stop-cluster.sh`, `member.sh`); the console never signals processes itself.
+- Destructive actions (fresh start, stop all, hard kill) and member stops that would leave less than a majority running ask for confirmation first; one operation runs at a time.
+- The controlled runtime root is shown on every frame. Validator ports that answer without a tracked pid are flagged as possibly belonging to another runtime root.
+- It reads only 127.0.0.1 ports derived from the scripts' env and `cluster-launch.env`; it has no remote profile and must not grow one without the authenticated, audited action model in stage 3.
+
 ## Production Boundary
 
 The production board should consume a stable `ops.board.v1` snapshot assembled from independently versioned sources. A snapshot should include:

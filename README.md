@@ -28,6 +28,7 @@ oak-chain doctor
 oak-chain ops board
 
 oak-chain mock up -- --fresh --build
+oak-chain mock console
 oak-chain mock verify smoke
 oak-chain lab 3x2 up -- --fresh
 oak-chain lab verify surfaces-3x2
@@ -75,6 +76,32 @@ oak-chain ops board \
 Colour is enabled automatically in an interactive terminal. Use `--color` to preserve it in one-shot output or `--no-color`/`NO_COLOR=1` for plain text.
 
 The lifecycle scripts remain the recoverable control plane; the TUI is a view over governed telemetry rather than a reimplementation of startup logic. See [`docs/OPS-TUI-ARCHITECTURE.md`](docs/OPS-TUI-ARCHITECTURE.md) for the structured lifecycle-event contract and production roadmap.
+
+### Mock cluster console
+
+Start, stop and fault-inject the local mock cluster from one screen:
+
+```bash
+oak-chain mock console
+# or, from modes/mock/validators/lifecycle:
+./console.sh
+```
+
+The header always shows the runtime root being controlled. Members show process and HTTP state, role, uptime and each node's Aeron view, with a quorum summary above them.
+
+| Key | Action | Runs |
+|---|---|---|
+| `s` | start the cluster (`f` toggles `--fresh`, `b` toggles `--build`; fresh asks first) | `start-cluster.sh` |
+| `x` | stop everything (asks first) | `stop-cluster.sh` |
+| `↑↓` / `0-4` | select a member | — |
+| `u` / `t` / `r` | start / graceful stop / restart the member | `member.sh start\|stop\|restart N` |
+| `k` | hard-kill the member, a simulated crash (asks first) | `member.sh kill N` |
+| `l` | switch the pane between operation output and the member's log | — |
+| `q` | quit; the cluster keeps running | — |
+
+Stopping or restarting a member that would leave fewer than a majority running asks for confirmation first. Only one operation runs at a time.
+
+The console never signals processes itself: every action is one of the lifecycle scripts, which stay usable directly for recovery. Use `--once` (or a non-interactive stdout) for a plain status snapshot, and `--runtime-root PATH` to point at another runtime root. Resizing between 3 and 5 members is deliberately not offered here: Aeron membership is static, so resizing means a fresh re-form.
 
 ## Layout
 

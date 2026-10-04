@@ -832,6 +832,29 @@ if [ "$FRESH" = "true" ]; then
   preflight_cleanup
 fi
 
+# Membership-critical launch settings, read by member.sh (and the mock console) so a member
+# restarted on its own rejoins with exactly the membership its peers were launched with.
+write_launch_record() {
+  local record="$PID_DIR/cluster-launch.env"
+  {
+    echo "# Written by start-cluster.sh at launch; read by member.sh. Do not edit."
+    echo "OAK_CLUSTER_NAME=$CLUSTER_NAME"
+    echo "OAK_CLUSTER_SIZE=$CLUSTER_SIZE"
+    echo "OAK_VALIDATOR_HTTP_BASE_PORT=$VALIDATOR_HTTP_BASE_PORT"
+    echo "OAK_VALIDATOR_HTTP_PORT_STEP=$VALIDATOR_HTTP_PORT_STEP"
+    echo "AERON_CLUSTER_BASE_PORT=$AERON_CLUSTER_BASE_PORT"
+    echo "AERON_DIR_BASE=${AERON_DIR_BASE:-}"
+    echo "AERON_RAMDISK_ROOT=${AERON_RAMDISK_ROOT:-}"
+    echo "OAK_MOCK_EPOCH_DURATION_SECONDS=$MOCK_EPOCH_SECONDS"
+    echo "OAK_BLOCKCHAIN_MODE=$OAK_BLOCKCHAIN_MODE"
+    echo "OPS_PROXY_PORT=$OPS_PROXY_PORT"
+    echo "IPFS_API_HTTP=$IPFS_API_HTTP"
+    echo "LAUNCHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  } > "$record.tmp"
+  mv "$record.tmp" "$record"
+}
+write_launch_record
+
 for node in "${NODES[@]}"; do
   pid_file="$PID_DIR/validator-${node}.pid"
   if [ -f "$pid_file" ] && is_pid_alive "$(cat "$pid_file" 2>/dev/null || true)"; then
