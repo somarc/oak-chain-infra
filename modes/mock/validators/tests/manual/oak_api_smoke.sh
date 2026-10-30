@@ -9,7 +9,6 @@ PATHS=(
   "/v1/head"
   "/v1/proposals/pending/count"
   "/v1/peers"
-  "/v1/ngrok-url"
   "/v1/blockchain/config"
   "/v1/aeron/cluster-state"
   "/v1/aeron/raft-metrics"
