@@ -1,0 +1,20 @@
+# Production CDN worker for https://oakchain.net (Oak Chain public docs, EDS).
+# src/index.mjs is Adobe's aem-cloudflare-prod-worker, unmodified; see README.md.
+name = "oak-chain-docs-cdn"
+main = "src/index.mjs"
+account_id = "cc5a1a611277f98ee842200a4132efe6"
+compatibility_date = "2025-03-17"
+workers_dev = false
+
+# Apex only. www.oakchain.net is 301-redirected to the apex by a zone
+# Redirect Rule, which runs before Workers.
+routes = [
+  { pattern = "oakchain.net/*", zone_name = "oakchain.net" },
+]
+
+[vars]
+ORIGIN_HOSTNAME = "main--oak-chain-docs-eds--somarc.aem.live"
+# Keep disabled until a Cloudflare purge token is registered in the AEM site
+# CDN config (README.md, "Push invalidation"). Enabled without it, aem.live
+# returns long TTLs that nothing purges, so published changes go stale.
+PUSH_INVALIDATION = "disabled"
