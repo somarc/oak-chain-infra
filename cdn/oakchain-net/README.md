@@ -86,5 +86,6 @@ curl -sI https://oakchain.net/drafts/x | head -1                     # 404 (bloc
   to Cloudflare (registry updated 19:26 UTC). The zone activated about 6
   minutes later, and the Let's Encrypt edge certificate covers `oakchain.net`
   and `*.oakchain.net`. All the Verify checks pass, and canonical/`og:url`
-  follow the forwarded host. The sitemap `<loc>` entries still use the
-  `aem.live` origin set in `oak-chain-docs-eds/helix-sitemap.yaml`.
+  follow the forwarded host. The sitemap origin was moved to
+  `https://oakchain.net` (oak-chain-docs-eds PR #4), the sitemap rebuilt, and
+  the stale `/sitemap.xml` purged from the Cloudflare cache.
