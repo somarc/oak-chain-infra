@@ -54,6 +54,21 @@ test('write and delete transactions carry exactly the fields the runtime contrac
   assert.match(toForm({ message: 'a "b" & c=d' }), /^message=a\+%22b%22\+%26\+c%3Dd$/);
 });
 
+test('the optional federation namespace is sent lower-cased, validated, and never signed', () => {
+  const namespace = testKey(3).address;
+  const write = buildWrite({ keyIndex: 4, message: 'm', namespace: namespace.toUpperCase().replace('0X', '0x') });
+  assert.equal(write.namespace, namespace);
+  assert.equal(write.walletAddress, testKey(4).address, 'the signer stays the writer, not the namespace');
+  assert.equal(recoverSigner('m', write.signature), write.walletAddress);
+  assert.equal('namespace' in buildWrite({ message: 'm' }), false, 'absent by default (the signer\'s own wallet)');
+  assert.throws(() => buildWrite({ message: 'm', namespace: '0x1234' }), /namespace must be/);
+
+  const del = buildDelete({ contentPath: '/oak-chain/a/b', keyIndex: 4, namespace });
+  assert.equal(del.namespace, namespace);
+  assert.equal(recoverSigner('/oak-chain/a/b', del.signature), testKey(4).address);
+  assert.equal('namespace' in buildDelete({ contentPath: '/x' }), false);
+});
+
 function prefixedSign(message, privateKeyHex, length) {
   const bytes = new TextEncoder().encode(message);
   const digest = keccak256(new Uint8Array([...new TextEncoder().encode(`\u0019Ethereum Signed Message:\n${length}`), ...bytes]));
