@@ -52,6 +52,8 @@ WALLET_B_CATCHUP="${WALLET_B_CATCHUP:-0xaa00000000000000000000000000000000000003
 # prefix), so roles keep distinct first bytes (modes/mock/lib/oak-tx.sh).
 # shellcheck source=../../../lib/oak-tx.sh
 source "$TESTS_DIR/../../lib/oak-tx.sh"
+# shellcheck source=../lib/_sharding_health_lib.sh
+source "$TESTS_DIR/lib/_sharding_health_lib.sh"
 WALLET_A="$(test_wallet_for_address "$WALLET_A")"
 WALLET_B="$(test_wallet_for_address "$WALLET_B")"
 SMOKE_WALLET_A="$(test_wallet_for_address "$SMOKE_WALLET_A")"
@@ -695,10 +697,24 @@ wait_path_visible_all_ports() {
   done
 }
 
+# A member whose remote mount is down answers 404 for every remote path, so "absent on all
+# ports" only counts once every member's remote mounts are available.
+require_remote_mounts_available() {
+  local label="$1"
+  shift
+  local out
+  if ! out="$(sharding_wait_mounts_available "$READ_TIMEOUT_SECONDS" "$@")"; then
+    printf '%s\n' "$out" | tee -a "$RUN_LOG"
+    fail "${label}: remote mounts unavailable; an absence check would pass vacuously"
+  fi
+  log "MOUNTS ${label}: ${out#✅ }"
+}
+
 wait_path_absent_all_ports() {
   local path="$1"
   local label="$2"
   shift 2
+  require_remote_mounts_available "$label" "$@"
   local port
   for port in "$@"; do
     wait_path_absent_on_port "$port" "$path" "$label"

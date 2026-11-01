@@ -74,6 +74,27 @@ still routes to the same shard; roles therefore use distinct first bytes.
   - Fast two-cluster sharding and redirect proof.
 - `routing/sharding-3x3-smoke.sh`
   - Three-cluster authoritative routing proof.
+- What both routing smokes assert, through `lib/_sharding_health_lib.sh`
+  (JSON checks in `lib/sharding_health.py`):
+  - on every member of every cluster, not just validator-0: `sharding.enabled`,
+    `localPrefixes`, `remoteMountCount` (a config echo, kept as sanity) and
+    `authoritativeStoreSeparated`;
+  - `sharding.configDigest` is identical across the members of each cluster; a
+    divergent member is named by port;
+  - before any routing or visibility assertion, every member reports
+    `remoteEndpointsAvailable == remoteEndpointCount` within `READ_TIMEOUT_SECONDS`;
+    otherwise the smoke fails with each unavailable mount's endpoint, circuit and
+    `lastError`;
+  - write messages carry a per-run nonce (`SMOKE_RUN_NONCE`, default
+    timestamp-pid-random), so a rerun on a reused runtime root cannot pass on
+    content an earlier run left behind.
+  - They require a runtime whose `/health` reports per-mount health
+    (`configDigest`, `remoteEndpointCount`, `remoteEndpointsAvailable`,
+    `remoteMounts`); against an older runtime they fail fast, naming
+    `oak-segment-consensus` `fix/cluster-of-clusters-phase0`.
+- `surfaces/proposal-surfaces-3x2.sh` runs the same mount gate before every
+  "absent on all ports" check: a member whose remote mount is down answers 404
+  for remote paths, so absence would otherwise pass vacuously.
 - `stability/aeron-warm-failover-smoke.sh`
   - Repeated failover loop for confidence in recovery over multiple cycles.
 - `stability/aeron-quorum-envelope-smoke.sh`
