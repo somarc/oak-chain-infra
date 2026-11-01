@@ -24,10 +24,12 @@ LAUNCH_RECORD="$PID_DIR/cluster-launch.env"
 STOP_WAIT_SECONDS="${STOP_WAIT_SECONDS:-30}"
 KILL_WAIT_SECONDS="${KILL_WAIT_SECONDS:-10}"
 STOP_ESCALATE="${STOP_ESCALATE:-true}"
-RECORD_KEYS="OAK_CLUSTER_NAME OAK_CLUSTER_SIZE OAK_VALIDATOR_HTTP_BASE_PORT OAK_VALIDATOR_HTTP_PORT_STEP AERON_CLUSTER_BASE_PORT AERON_DIR_BASE AERON_RAMDISK_ROOT OAK_MOCK_EPOCH_DURATION_SECONDS OAK_BLOCKCHAIN_MODE EXTRA_JAVA_OPTS IPFS_GATEWAY_BASE IPFS_LOCAL_GATEWAY_BASE"
+RECORD_KEYS="OAK_CLUSTER_NAME OAK_CLUSTER_SIZE OAK_VALIDATOR_HTTP_BASE_PORT OAK_VALIDATOR_HTTP_PORT_STEP AERON_CLUSTER_BASE_PORT AERON_DIR_BASE AERON_RAMDISK_ROOT OAK_MOCK_EPOCH_DURATION_SECONDS OAK_BLOCKCHAIN_MODE EXTRA_JAVA_OPTS IPFS_GATEWAY_BASE IPFS_LOCAL_GATEWAY_BASE OAK_CONSENSUS_JAR OAK_CONSENSUS_JAR_SHA256"
 MEMBERSHIP_KEYS="OAK_CLUSTER_SIZE OAK_VALIDATOR_HTTP_BASE_PORT OAK_VALIDATOR_HTTP_PORT_STEP AERON_CLUSTER_BASE_PORT"
 # Written into committed content (ipfsGateway), so a member must run with its peers' value.
 CONTENT_KEYS="IPFS_GATEWAY_BASE"
+# The consensus jar override (path and sha256): a member runs the jar its peers were launched with.
+JAR_KEYS="OAK_CONSENSUS_JAR OAK_CONSENSUS_JAR_SHA256"
 
 usage() {
   cat <<EOF
@@ -46,9 +48,10 @@ Environment:
   PID_DIR / LOG_DIR     Derived from CLUSTER_RUNTIME_ROOT unless set
   VALIDATOR_SCRIPT      Validator launcher (default: debug/run-validator-node.sh)
   STOP_ESCALATE         false = a stop that outlives STOP_WAIT_SECONDS fails instead of SIGKILL
-Membership (size, ports, Aeron dirs), EXTRA_JAVA_OPTS (sharding flags) and the IPFS gateway
-bases are read from \$PID_DIR/cluster-launch.env when present; your environment wins for
-EXTRA_JAVA_OPTS. Records without gateway bases imply $OAK_LEGACY_IPFS_GATEWAY_BASE.
+Membership (size, ports, Aeron dirs), EXTRA_JAVA_OPTS (sharding flags), the IPFS gateway
+bases and the OAK_CONSENSUS_JAR override (path and sha256) are read from
+\$PID_DIR/cluster-launch.env when present; your environment wins for EXTRA_JAVA_OPTS only.
+Records without gateway bases imply $OAK_LEGACY_IPFS_GATEWAY_BASE.
 EOF
 }
 
@@ -79,6 +82,14 @@ apply_record_value() {
       echo "❌ $key=$current in your environment, but this cluster was launched with $key=$value"
       echo "   ($LAUNCH_RECORD). It is written into committed content, so a member must run with"
       echo "   its peers' value. Unset it, or stop the whole cluster and relaunch it with start-cluster.sh."
+      exit 1
+      ;;
+  esac
+  case " $JAR_KEYS " in
+    *" $key "*)
+      echo "❌ $key=$current in your environment, but this cluster was launched with $key=${value:-<unset>}"
+      echo "   ($LAUNCH_RECORD). A member must run the jar its peers run. Unset it, or stop the"
+      echo "   whole cluster and relaunch it with start-cluster.sh."
       exit 1
       ;;
   esac
@@ -239,6 +250,9 @@ start_member() {
   echo "• Starting validator-$node (member $node of $CLUSTER_SIZE, http :$port)"
   if [ -n "${EXTRA_JAVA_OPTS:-}" ]; then
     echo "  Extra JVM opts (${EXTRA_JAVA_OPTS_SOURCE}): $EXTRA_JAVA_OPTS"
+  fi
+  if [ -n "${OAK_CONSENSUS_JAR:-}" ]; then
+    echo "  Consensus jar: $OAK_CONSENSUS_JAR (sha256 ${OAK_CONSENSUS_JAR_SHA256:-unpinned})"
   fi
   if ! launch_detached "$pid_file" "$start_log" "$VALIDATOR_SCRIPT" "$node"; then
     echo "❌ Launch failed for validator-$node; see $start_log"

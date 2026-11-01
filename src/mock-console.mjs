@@ -142,6 +142,8 @@ const RESTORED_LAUNCH_KEYS = [
   'EXTRA_JAVA_OPTS',
   'IPFS_GATEWAY_BASE',
   'IPFS_LOCAL_GATEWAY_BASE',
+  // The jar path only: member.sh pins the recorded sha256 itself, and a cluster start re-hashes.
+  'OAK_CONSENSUS_JAR',
 ];
 
 // Same precedence the lifecycle scripts use: explicit option, then environment, then the

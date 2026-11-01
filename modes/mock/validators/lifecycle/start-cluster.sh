@@ -129,6 +129,7 @@ Environment:
   OAK_QUEUE_TUNING_SYSTEM_PROP_FALLBACK true|false (default true). Keep JVM -D fallback while validating OSGi pickup.
   OAK_MOCK_EPOCH_DURATION_SECONDS       Mock GC epoch duration in seconds (default: $MOCK_EPOCH_SECONDS).
   OAK_RATE_LIMIT_ENABLED                true|false HTTP rate limiting (default false in mock mode).
+  OAK_CONSENSUS_JAR                     Absolute path of the consensus jar every member runs (default: workspace search).
 EOF
 }
 
@@ -181,6 +182,32 @@ if [ "$CLUSTER_SIZE" != "3" ] && [ "$CLUSTER_SIZE" != "5" ]; then
   echo "Invalid OAK_CLUSTER_SIZE=$CLUSTER_SIZE (expected 3 or 5)"
   exit 1
 fi
+
+# OAK_CONSENSUS_JAR: every member runs this exact jar (debug/run-validator-node.sh). Its sha256 is
+# taken once here, passed to every member and kept in the launch record, so a member never runs a
+# jar rebuilt in place after the launch.
+if [ -n "${OAK_CONSENSUS_JAR:-}" ]; then
+  case "$OAK_CONSENSUS_JAR" in
+    /*) ;;
+    *) echo "❌ OAK_CONSENSUS_JAR must be an absolute path: $OAK_CONSENSUS_JAR"; exit 1 ;;
+  esac
+  if [ ! -f "$OAK_CONSENSUS_JAR" ]; then
+    echo "❌ OAK_CONSENSUS_JAR does not exist: $OAK_CONSENSUS_JAR"
+    exit 1
+  fi
+  if [ "$BUILD_ON_START" = "true" ]; then
+    echo "❌ --build builds the workspace jar, which OAK_CONSENSUS_JAR overrides; build that jar yourself."
+    exit 1
+  fi
+  jar_sha256="$( (shasum -a 256 "$OAK_CONSENSUS_JAR" 2>/dev/null || sha256sum "$OAK_CONSENSUS_JAR") | awk '{print $1}')"
+  if [ -n "${OAK_CONSENSUS_JAR_SHA256:-}" ] && [ "$OAK_CONSENSUS_JAR_SHA256" != "$jar_sha256" ]; then
+    echo "❌ OAK_CONSENSUS_JAR_SHA256=$OAK_CONSENSUS_JAR_SHA256 but $OAK_CONSENSUS_JAR hashes to $jar_sha256"
+    exit 1
+  fi
+  export OAK_CONSENSUS_JAR
+  export OAK_CONSENSUS_JAR_SHA256="$jar_sha256"
+  echo "• Consensus JAR override: $OAK_CONSENSUS_JAR (sha256 $OAK_CONSENSUS_JAR_SHA256)"
+fi
 export OAK_CLUSTER_SIZE="$CLUSTER_SIZE"
 export OAK_MOCK_EPOCH_DURATION_SECONDS="$MOCK_EPOCH_SECONDS"
 
@@ -217,7 +244,7 @@ cluster_wallet_address() {
 }
 
 generate_cluster_wallet() {
-  local jar_file="$OAK_ROOT/jackrabbit-oak/oak-segment-consensus/target/oak-segment-consensus.jar"
+  local jar_file="${OAK_CONSENSUS_JAR:-$OAK_ROOT/jackrabbit-oak/oak-segment-consensus/target/oak-segment-consensus.jar}"
   if [ ! -f "$jar_file" ]; then
     echo "❌ Cannot generate cluster wallet: missing $jar_file"
     return 1
@@ -659,7 +686,7 @@ consensus_jar_is_stale() {
 }
 
 warn_if_consensus_jar_stale() {
-  if [ "$BUILD_ON_START" = "true" ]; then
+  if [ "$BUILD_ON_START" = "true" ] || [ -n "${OAK_CONSENSUS_JAR:-}" ]; then
     return 0
   fi
 
@@ -908,6 +935,31 @@ if ! require_gateway_matches_running_members; then
   exit 1
 fi
 
+# Members still running from an earlier launch run the recorded jar; refuse to launch the rest
+# with another one (an empty record value means the default workspace search).
+require_jar_matches_running_members() {
+  local record="$PID_DIR/cluster-launch.env" node running="" recorded_jar recorded_sha
+  [ -f "$record" ] || return 0
+  for node in "${NODES[@]}"; do
+    if is_pid_alive "$(cat "$PID_DIR/validator-${node}.pid" 2>/dev/null || true)"; then
+      running="$running validator-$node"
+    fi
+  done
+  [ -n "$running" ] || return 0
+  recorded_jar="$(oak_launch_record_get "$record" OAK_CONSENSUS_JAR || true)"
+  recorded_sha="$(oak_launch_record_get "$record" OAK_CONSENSUS_JAR_SHA256 || true)"
+  if [ "$recorded_jar" = "${OAK_CONSENSUS_JAR:-}" ] && [ "$recorded_sha" = "${OAK_CONSENSUS_JAR_SHA256:-}" ]; then
+    return 0
+  fi
+  echo "❌ Running members ($running ) were launched with OAK_CONSENSUS_JAR=${recorded_jar:-<workspace search>} (sha256 ${recorded_sha:-n/a});"
+  echo "   this start would launch the others with OAK_CONSENSUS_JAR=${OAK_CONSENSUS_JAR:-<workspace search>} (sha256 ${OAK_CONSENSUS_JAR_SHA256:-n/a})."
+  echo "   Members must run the same jar. Stop the cluster first, or start with the recorded jar."
+  return 1
+}
+if ! require_jar_matches_running_members; then
+  exit 1
+fi
+
 # Membership-critical launch settings, read by member.sh (and the mock console) so a member
 # restarted on its own rejoins with exactly the membership its peers were launched with.
 # EXTRA_JAVA_OPTS carries the sharding flags of multi-cluster topologies; without it a
@@ -928,6 +980,8 @@ write_launch_record() {
     "IPFS_GATEWAY_BASE=$IPFS_GATEWAY_BASE" \
     "IPFS_LOCAL_GATEWAY_BASE=$IPFS_LOCAL_GATEWAY_BASE" \
     "EXTRA_JAVA_OPTS=${EXTRA_JAVA_OPTS:-}" \
+    "OAK_CONSENSUS_JAR=${OAK_CONSENSUS_JAR:-}" \
+    "OAK_CONSENSUS_JAR_SHA256=${OAK_CONSENSUS_JAR_SHA256:-}" \
     "LAUNCHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
 if ! write_launch_record; then
