@@ -111,7 +111,10 @@ still routes to the same shard; roles therefore use distinct first bytes.
 - Validator cluster running, or a suite that can start one.
 - `curl` and `python3` installed.
 - `jq` recommended.
-- Local IPFS available when running binary/IPFS or proposal suites.
+- Local IPFS available when running binary/IPFS or proposal suites. Its gateway
+  belongs on `127.0.0.1:5080`, off every validator port; an older `~/.ipfs`
+  keeps `8099` until reconfigured (`../TROUBLESHOOTING.md`, IPFS gateway on a
+  validator port).
 
 ## Usage
 
