@@ -95,6 +95,39 @@ still routes to the same shard; roles therefore use distinct first bytes.
 - `surfaces/proposal-surfaces-3x2.sh` runs the same mount gate before every
   "absent on all ports" check: a member whose remote mount is down answers 404
   for remote paths, so absence would otherwise pass vacuously.
+- `routing/federation-3x2-smoke.sh`
+  - Enterprise-federation proof on the `fed-3x2` topology (two clusters, one
+    enterprise each, a static-file directory instead of `oak.sharding.*`
+    routes). Needs a jar from `jackrabbit-oak` `feature/enterprise-federation`.
+  - Assumes both clusters run (`../lifecycle/start-fed-3x2.sh`); never starts,
+    stops or signals anything. It writes the shared directory file itself.
+  - Phases: P0 preflight (members up, pids, one jar sha256, launch flags),
+    P1 charter (one charterDigest and clusterId per cluster,
+    `charterMatchesConfig`, different clusterIds; `400
+    namespace_requires_federation` before any directory), P2 directory epoch
+    E1 (all six members converge on one digest; content, prevDigest,
+    `federated`, `localNamespaces`), P3 writes and deletes (own-namespace 202
+    committed on every member, `307 wrong_cluster` with the owner's first
+    endpoint, listed writer into another namespace 202 with the wallet node's
+    `wallet` = the namespace, `403 writer_not_authorized`, `403
+    namespace_unclaimed`), P4 cross-cluster reads through verified directory
+    mounts, P5 directory epoch E2 (writer removed: prevDigest chains, the
+    writer gets 403), P6 end state (health, pids unchanged, no unexpected
+    5xx, no ERROR-level federation lines appended to any validator log).
+  - E1 is one above the committed (or file) epoch, so a rerun on kept roots
+    continues at E1+2; the unfederated 400 probe then becomes a diagnostic
+    UNKNOWN (start with `--fresh` to cover it).
+  - Bounded: under 30 write/delete requests, a deadline on every wait
+    (`FED_SMOKE_DEADLINE_SECONDS`, default 60; `FED_SMOKE_POLL_MS`, default
+    2000); aborts on the first unexpected 5xx or a member that stops answering
+    and leaves everything running. Tolerated: `no_quorum` retries and `503`
+    from a mount that is still unavailable, both recorded.
+  - Evidence: one sealed (read-only) directory per run,
+    `$FED_3X2_ROOT/evidence/<UTC timestamp>/` with `manifest.json`,
+    `requests.ndjson`, `snapshots/<phase>/`, `directory-epoch-N.json`,
+    `log-scan.json`, `assertions.tsv` (PASS / FAIL / UNKNOWN), `summary.json`
+    and `report.md`. Logic and fixture tests: `src/federation-smoke.mjs`,
+    `test/federation-smoke.test.mjs`. Exit 0 PASS, 1 FAIL, 2 refused.
 - `stability/aeron-warm-failover-smoke.sh`
   - Repeated failover loop for confidence in recovery over multiple cycles.
 - `stability/aeron-quorum-envelope-smoke.sh`
@@ -124,6 +157,9 @@ still routes to the same shard; roles therefore use distinct first bytes.
 
 # Fast routing proof
 ./routing/sharding-3x2-smoke.sh
+
+# Enterprise federation proof (clusters from ../lifecycle/start-fed-3x2.sh)
+OAK_CONSENSUS_JAR=/abs/path/oak-segment-consensus.jar ./routing/federation-3x2-smoke.sh
 
 # Single-cluster acceptance gate
 bash ./surfaces/proposal-surfaces-single-cluster.sh
