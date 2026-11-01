@@ -140,6 +140,8 @@ const RESTORED_LAUNCH_KEYS = [
   'OAK_BLOCKCHAIN_MODE',
   'OPS_PROXY_PORT',
   'EXTRA_JAVA_OPTS',
+  'IPFS_GATEWAY_BASE',
+  'IPFS_LOCAL_GATEWAY_BASE',
 ];
 
 // Same precedence the lifecycle scripts use: explicit option, then environment, then the

@@ -6,6 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/root-guard.sh"
 # shellcheck source=lib/launch-record.sh
 source "$SCRIPT_DIR/lib/launch-record.sh"
+# shellcheck source=lib/ipfs-gateway.sh
+source "$SCRIPT_DIR/lib/ipfs-gateway.sh"
 export OAK_BLOCKCHAIN_MODE="${OAK_BLOCKCHAIN_MODE:-mock}"
 export OAK_RATE_LIMIT_ENABLED="${OAK_RATE_LIMIT_ENABLED:-false}"
 export OAK_CLUSTER_ENV="${OAK_CLUSTER_ENV:-test}"
@@ -52,6 +54,11 @@ IPFS_READY_TIMEOUT_SECONDS="${IPFS_READY_TIMEOUT_SECONDS:-30}"
 AUTO_START_IPFS="${AUTO_START_IPFS:-true}"
 IPFS_DAEMON_LOG_FILE="${IPFS_DAEMON_LOG_FILE:-$LOG_DIR/ipfs-daemon.log}"
 IPFS_PID_FILE="${IPFS_PID_FILE:-$PID_DIR/ipfs-daemon.pid}"
+# Validators read these (run-validator-node.sh); the default lies outside every validator port
+# range (lib/ipfs-gateway.sh). IPFS_GATEWAY_BASE is written into committed content, so every
+# member of a cluster must run with the same value.
+export IPFS_GATEWAY_BASE="${IPFS_GATEWAY_BASE:-$OAK_IPFS_GATEWAY_DEFAULT_BASE}"
+export IPFS_LOCAL_GATEWAY_BASE="${IPFS_LOCAL_GATEWAY_BASE:-$OAK_IPFS_GATEWAY_DEFAULT_BASE}"
 NODES=()
 HTTP_PORTS=()
 
@@ -101,6 +108,8 @@ Environment:
   AUTO_START_IPFS            Auto-start IPFS daemon if API is unavailable (default: $AUTO_START_IPFS)
   IPFS_DAEMON_LOG_FILE       Log file for auto-started IPFS daemon (default: $IPFS_DAEMON_LOG_FILE)
   IPFS_PID_FILE              PID file for auto-started IPFS daemon (default: $IPFS_PID_FILE)
+  IPFS_GATEWAY_BASE          Gateway base written into content (default: $IPFS_GATEWAY_BASE)
+  IPFS_LOCAL_GATEWAY_BASE    Local gateway base; a new ~/.ipfs repo is initialized with its port (default: $IPFS_LOCAL_GATEWAY_BASE)
   CLUSTER_RUNTIME_ROOT       Root directory for stores/logs/pids (default: $CLUSTER_RUNTIME_ROOT)
   OAK_CLUSTER_NAME           Logical cluster label used by status output and 3x2 packs (default: $CLUSTER_NAME)
   OAK_VALIDATOR_HTTP_BASE_PORT Base HTTP port for validator-0 (default: $VALIDATOR_HTTP_BASE_PORT)
@@ -719,6 +728,14 @@ start_ipfs_daemon_if_needed() {
       echo "⚠️  Failed to initialize IPFS repo automatically"
       return 1
     fi
+    # Kubo's default gateway (8080) is often taken; serve it where the validators look for it.
+    local gateway_addr
+    gateway_addr="$(oak_ipfs_gateway_multiaddr "$IPFS_LOCAL_GATEWAY_BASE")"
+    if [ -n "$gateway_addr" ]; then
+      echo "  - Setting IPFS gateway address to $gateway_addr"
+      ipfs config Addresses.Gateway "$gateway_addr" >/dev/null 2>&1 \
+        || echo "⚠️  Could not set Addresses.Gateway; run: $(oak_ipfs_gateway_fix_hint "$IPFS_LOCAL_GATEWAY_BASE")"
+    fi
   fi
 
   : > "$IPFS_DAEMON_LOG_FILE"
@@ -810,6 +827,36 @@ if ! ensure_ipfs_ready; then
   exit 1
 fi
 
+# An existing ~/.ipfs repo keeps its own Addresses.Gateway. Fail when it sits on one of this
+# cluster's ports (validator-4's standby is 8099 in a 5-member cluster on base 8090); otherwise
+# only warn that the validators' local gateway links point elsewhere.
+check_ipfs_gateway_port() {
+  local expected daemon_ports port cluster_ports
+  expected="$(oak_guard_url_port "$IPFS_LOCAL_GATEWAY_BASE")"
+  daemon_ports="$(oak_ipfs_daemon_gateway_ports "$IPFS_API_HTTP")"
+  [ -n "$daemon_ports" ] || return 0
+  cluster_ports=" $(oak_guard_cluster_ports "$CLUSTER_SIZE" "$VALIDATOR_HTTP_BASE_PORT" "$VALIDATOR_HTTP_PORT_STEP" "$AERON_CLUSTER_BASE_PORT" | tr '\n' ' ') $OPS_PROXY_PORT "
+  for port in $daemon_ports; do
+    case "$cluster_ports" in
+      *" $port "*)
+        echo "❌ The IPFS daemon's gateway listens on port $port, which this ${CLUSTER_SIZE}-member cluster needs."
+        echo "   Move the gateway (with the daemon stopped): $(oak_ipfs_gateway_fix_hint "$IPFS_LOCAL_GATEWAY_BASE")"
+        echo "   then restart the daemon. See TROUBLESHOOTING.md (IPFS gateway on a validator port)."
+        return 1
+        ;;
+    esac
+  done
+  case " $(echo "$daemon_ports" | tr '\n' ' ') " in
+    *" $expected "*) return 0 ;;
+  esac
+  echo "⚠️  The IPFS daemon's gateway listens on port(s) $(echo "$daemon_ports" | tr '\n' ' ')but IPFS_LOCAL_GATEWAY_BASE is $IPFS_LOCAL_GATEWAY_BASE."
+  echo "   Validators will hand out local gateway links that do not resolve. To align the daemon (stopped):"
+  echo "   $(oak_ipfs_gateway_fix_hint "$IPFS_LOCAL_GATEWAY_BASE")"
+}
+if ! check_ipfs_gateway_port; then
+  exit 1
+fi
+
 warn_if_consensus_jar_stale
 
 if [ "$BUILD_ON_START" = "true" ]; then
@@ -837,6 +884,30 @@ if [ "$FRESH" = "true" ]; then
   preflight_cleanup
 fi
 
+# Members still running from an earlier launch keep the IPFS_GATEWAY_BASE they were launched
+# with, and it is written into committed content. Refuse to launch the rest with another value
+# (records from before the gateway was recorded imply the old 8099 default).
+require_gateway_matches_running_members() {
+  local record="$PID_DIR/cluster-launch.env" recorded node running=""
+  [ -f "$record" ] || return 0
+  for node in "${NODES[@]}"; do
+    if is_pid_alive "$(cat "$PID_DIR/validator-${node}.pid" 2>/dev/null || true)"; then
+      running="$running validator-$node"
+    fi
+  done
+  [ -n "$running" ] || return 0
+  recorded="$(oak_launch_record_get "$record" IPFS_GATEWAY_BASE || echo "$OAK_LEGACY_IPFS_GATEWAY_BASE")"
+  [ "$recorded" = "$IPFS_GATEWAY_BASE" ] && return 0
+  echo "❌ Running members ($running ) were launched with IPFS_GATEWAY_BASE=$recorded;"
+  echo "   this start would launch the others with IPFS_GATEWAY_BASE=$IPFS_GATEWAY_BASE."
+  echo "   The gateway base is written into committed content, so members must agree. Either"
+  echo "   export IPFS_GATEWAY_BASE=$recorded IPFS_LOCAL_GATEWAY_BASE=$recorded, or stop the cluster first."
+  return 1
+}
+if ! require_gateway_matches_running_members; then
+  exit 1
+fi
+
 # Membership-critical launch settings, read by member.sh (and the mock console) so a member
 # restarted on its own rejoins with exactly the membership its peers were launched with.
 # EXTRA_JAVA_OPTS carries the sharding flags of multi-cluster topologies; without it a
@@ -854,6 +925,8 @@ write_launch_record() {
     "OAK_BLOCKCHAIN_MODE=$OAK_BLOCKCHAIN_MODE" \
     "OPS_PROXY_PORT=$OPS_PROXY_PORT" \
     "IPFS_API_HTTP=$IPFS_API_HTTP" \
+    "IPFS_GATEWAY_BASE=$IPFS_GATEWAY_BASE" \
+    "IPFS_LOCAL_GATEWAY_BASE=$IPFS_LOCAL_GATEWAY_BASE" \
     "EXTRA_JAVA_OPTS=${EXTRA_JAVA_OPTS:-}" \
     "LAUNCHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }

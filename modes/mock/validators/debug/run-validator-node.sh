@@ -136,8 +136,9 @@ AERON_DIR_BASE="$(resolve_aeron_dir_base)"
 AERON_DIR="${AERON_DIR:-${AERON_DIR_BASE}-${NODE_ID}-driver}"
 BLOBSTORE_TYPE="${BLOBSTORE_TYPE:-ipfs}"
 IPFS_API_ENDPOINT="${IPFS_API_ENDPOINT:-/ip4/127.0.0.1/tcp/5001}"
-IPFS_GATEWAY_BASE="${IPFS_GATEWAY_BASE:-http://127.0.0.1:8099/ipfs/}"
-IPFS_LOCAL_GATEWAY_BASE="${IPFS_LOCAL_GATEWAY_BASE:-http://127.0.0.1:8099/ipfs/}"
+# 5080, not 8099 (validator-4's standby port in 5-member clusters): lifecycle/lib/ipfs-gateway.sh.
+IPFS_GATEWAY_BASE="${IPFS_GATEWAY_BASE:-http://127.0.0.1:5080/ipfs/}"
+IPFS_LOCAL_GATEWAY_BASE="${IPFS_LOCAL_GATEWAY_BASE:-http://127.0.0.1:5080/ipfs/}"
 HEALTH_PEER_PROBE_MODE="${OAK_HEALTH_PEER_PROBE_MODE:-http}"
 # 1 MiB socket buffers and receive window (macOS allows up to kern.ipc.maxsockbuf, 8 MiB). Aeron refuses
 # to start when SO_RCVBUF is smaller than the initial window, so keep the window <= the receive buffer.

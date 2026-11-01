@@ -29,3 +29,13 @@ oak_launch_record_write() {
   } > "$file.tmp" || return 1
   mv "$file.tmp" "$file"
 }
+
+# oak_launch_record_get FILE KEY : print KEY's value; return 1 when FILE or KEY is absent.
+oak_launch_record_get() {
+  local file="$1" key="$2" line
+  [ -f "$file" ] || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in "$key="*) echo "${line#*=}"; return 0 ;; esac
+  done < "$file"
+  return 1
+}
