@@ -5,9 +5,10 @@
 # membership. Stopping a member never shrinks the cluster: quorum stays a majority of the
 # configured size. Whole-cluster lifecycle remains start-cluster.sh / stop-cluster.sh.
 #
-# Membership-critical settings (cluster size, ports, Aeron dirs) come from the launch record
-# that start-cluster.sh writes to $PID_DIR/cluster-launch.env, so a restarted member rejoins
-# with the membership its peers were launched with.
+# Membership-critical settings (cluster size, ports, Aeron dirs) and the sharding JVM flags
+# (EXTRA_JAVA_OPTS) come from the launch record that start-cluster.sh writes to
+# $PID_DIR/cluster-launch.env, so a restarted member rejoins with the membership and shard map
+# its peers were launched with.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -19,7 +20,7 @@ LAUNCH_RECORD="$PID_DIR/cluster-launch.env"
 STOP_WAIT_SECONDS="${STOP_WAIT_SECONDS:-30}"
 KILL_WAIT_SECONDS="${KILL_WAIT_SECONDS:-10}"
 STOP_ESCALATE="${STOP_ESCALATE:-true}"
-RECORD_KEYS="OAK_CLUSTER_NAME OAK_CLUSTER_SIZE OAK_VALIDATOR_HTTP_BASE_PORT OAK_VALIDATOR_HTTP_PORT_STEP AERON_CLUSTER_BASE_PORT AERON_DIR_BASE AERON_RAMDISK_ROOT OAK_MOCK_EPOCH_DURATION_SECONDS OAK_BLOCKCHAIN_MODE"
+RECORD_KEYS="OAK_CLUSTER_NAME OAK_CLUSTER_SIZE OAK_VALIDATOR_HTTP_BASE_PORT OAK_VALIDATOR_HTTP_PORT_STEP AERON_CLUSTER_BASE_PORT AERON_DIR_BASE AERON_RAMDISK_ROOT OAK_MOCK_EPOCH_DURATION_SECONDS OAK_BLOCKCHAIN_MODE EXTRA_JAVA_OPTS"
 MEMBERSHIP_KEYS="OAK_CLUSTER_SIZE OAK_VALIDATOR_HTTP_BASE_PORT OAK_VALIDATOR_HTTP_PORT_STEP AERON_CLUSTER_BASE_PORT"
 
 usage() {
@@ -39,18 +40,28 @@ Environment:
   PID_DIR / LOG_DIR     Derived from CLUSTER_RUNTIME_ROOT unless set
   VALIDATOR_SCRIPT      Validator launcher (default: debug/run-validator-node.sh)
   STOP_ESCALATE         false = a stop that outlives STOP_WAIT_SECONDS fails instead of SIGKILL
-Membership (size, ports, Aeron dirs) is read from \$PID_DIR/cluster-launch.env when present.
+Membership (size, ports, Aeron dirs) and EXTRA_JAVA_OPTS (sharding flags) are read from
+\$PID_DIR/cluster-launch.env when present; your environment wins for EXTRA_JAVA_OPTS.
 EOF
 }
 
+# Record format (lib/launch-record.sh): KEY=VALUE, VALUE verbatim after the first '='. Read
+# whole lines: `IFS='=' read key value` would drop a trailing '=' from the value.
+EXTRA_JAVA_OPTS_SOURCE="environment"
 load_launch_record() {
   [ -f "$LAUNCH_RECORD" ] || return 0
-  local key value current
-  while IFS='=' read -r key value; do
+  local line key value current
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in *=*) ;; *) continue ;; esac
+    key="${line%%=*}"
+    value="${line#*=}"
     case " $RECORD_KEYS " in *" $key "*) ;; *) continue ;; esac
     current="${!key:-}"
     if [ -z "$current" ]; then
-      if [ -n "$value" ]; then export "$key=$value"; fi
+      if [ -n "$value" ]; then
+        export "$key=$value"
+        if [ "$key" = "EXTRA_JAVA_OPTS" ]; then EXTRA_JAVA_OPTS_SOURCE="launch record"; fi
+      fi
     elif [ "$current" != "$value" ]; then
       case " $MEMBERSHIP_KEYS " in
         *" $key "*)
@@ -59,6 +70,12 @@ load_launch_record() {
           exit 1
           ;;
       esac
+      if [ "$key" = "EXTRA_JAVA_OPTS" ]; then
+        echo "⚠️  EXTRA_JAVA_OPTS in your environment differs from the launch record; using your environment."
+        echo "   launched with: $value"
+        echo "   environment:   $current"
+        echo "   A member whose sharding flags differ from its peers' serves a different shard map."
+      fi
     fi
   done < "$LAUNCH_RECORD"
 }
@@ -194,6 +211,9 @@ start_member() {
 
   start_log="$LOG_DIR/start-validator-$node.log"
   echo "• Starting validator-$node (member $node of $CLUSTER_SIZE, http :$port)"
+  if [ -n "${EXTRA_JAVA_OPTS:-}" ]; then
+    echo "  Extra JVM opts (${EXTRA_JAVA_OPTS_SOURCE}): $EXTRA_JAVA_OPTS"
+  fi
   if ! launch_detached "$pid_file" "$start_log" "$VALIDATOR_SCRIPT" "$node"; then
     echo "❌ Launch failed for validator-$node; see $start_log"
     return 1

@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/root-guard.sh
 source "$SCRIPT_DIR/lib/root-guard.sh"
+# shellcheck source=lib/launch-record.sh
+source "$SCRIPT_DIR/lib/launch-record.sh"
 export OAK_BLOCKCHAIN_MODE="${OAK_BLOCKCHAIN_MODE:-mock}"
 export OAK_RATE_LIMIT_ENABLED="${OAK_RATE_LIMIT_ENABLED:-false}"
 export OAK_CLUSTER_ENV="${OAK_CLUSTER_ENV:-test}"
@@ -837,26 +839,27 @@ fi
 
 # Membership-critical launch settings, read by member.sh (and the mock console) so a member
 # restarted on its own rejoins with exactly the membership its peers were launched with.
+# EXTRA_JAVA_OPTS carries the sharding flags of multi-cluster topologies; without it a
+# restarted member would come back unsharded. Format: lib/launch-record.sh.
 write_launch_record() {
-  local record="$PID_DIR/cluster-launch.env"
-  {
-    echo "# Written by start-cluster.sh at launch; read by member.sh. Do not edit."
-    echo "OAK_CLUSTER_NAME=$CLUSTER_NAME"
-    echo "OAK_CLUSTER_SIZE=$CLUSTER_SIZE"
-    echo "OAK_VALIDATOR_HTTP_BASE_PORT=$VALIDATOR_HTTP_BASE_PORT"
-    echo "OAK_VALIDATOR_HTTP_PORT_STEP=$VALIDATOR_HTTP_PORT_STEP"
-    echo "AERON_CLUSTER_BASE_PORT=$AERON_CLUSTER_BASE_PORT"
-    echo "AERON_DIR_BASE=${AERON_DIR_BASE:-}"
-    echo "AERON_RAMDISK_ROOT=${AERON_RAMDISK_ROOT:-}"
-    echo "OAK_MOCK_EPOCH_DURATION_SECONDS=$MOCK_EPOCH_SECONDS"
-    echo "OAK_BLOCKCHAIN_MODE=$OAK_BLOCKCHAIN_MODE"
-    echo "OPS_PROXY_PORT=$OPS_PROXY_PORT"
-    echo "IPFS_API_HTTP=$IPFS_API_HTTP"
-    echo "LAUNCHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  } > "$record.tmp"
-  mv "$record.tmp" "$record"
+  oak_launch_record_write "$PID_DIR/cluster-launch.env" \
+    "OAK_CLUSTER_NAME=$CLUSTER_NAME" \
+    "OAK_CLUSTER_SIZE=$CLUSTER_SIZE" \
+    "OAK_VALIDATOR_HTTP_BASE_PORT=$VALIDATOR_HTTP_BASE_PORT" \
+    "OAK_VALIDATOR_HTTP_PORT_STEP=$VALIDATOR_HTTP_PORT_STEP" \
+    "AERON_CLUSTER_BASE_PORT=$AERON_CLUSTER_BASE_PORT" \
+    "AERON_DIR_BASE=${AERON_DIR_BASE:-}" \
+    "AERON_RAMDISK_ROOT=${AERON_RAMDISK_ROOT:-}" \
+    "OAK_MOCK_EPOCH_DURATION_SECONDS=$MOCK_EPOCH_SECONDS" \
+    "OAK_BLOCKCHAIN_MODE=$OAK_BLOCKCHAIN_MODE" \
+    "OPS_PROXY_PORT=$OPS_PROXY_PORT" \
+    "IPFS_API_HTTP=$IPFS_API_HTTP" \
+    "EXTRA_JAVA_OPTS=${EXTRA_JAVA_OPTS:-}" \
+    "LAUNCHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
-write_launch_record
+if ! write_launch_record; then
+  exit 1
+fi
 
 for node in "${NODES[@]}"; do
   pid_file="$PID_DIR/validator-${node}.pid"
