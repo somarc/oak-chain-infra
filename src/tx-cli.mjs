@@ -2,13 +2,16 @@
 //
 //   oak-chain tx key    [--index N | --prefix HH] [--seed S] [--private]
 //   oak-chain tx write  --message M [--index N | --prefix HH | --key-env VAR] [--seed S]
-//                       [--organization O] [--content-type T] [--proposal-id P] [--tx-hash H]
-//                       [--count N] [--format form|json]
-//   oak-chain tx delete --content-path P [key options] [--proposal-id P] [--tx-hash H] [--format form|json]
+//                       [--organization O] [--namespace 0x…] [--content-type T] [--proposal-id P]
+//                       [--tx-hash H] [--count N] [--format form|json]
+//   oak-chain tx delete --content-path P [key options] [--namespace 0x…] [--proposal-id P] [--tx-hash H]
+//                       [--format form|json]
 //   oak-chain tx verify --message M --signature S [--address A]
 //
 // --count N emits N transactions, one per line. In --message, {seq} becomes 1..N, and
 // {proposalId} and {wallet} become that transaction's values (so a script can pre-sign a batch).
+// --namespace writes into (or deletes from) an enterprise namespace on a federated cluster; the
+// signer must be that namespace's wallet or one of its enterprise's listed writers.
 // --format form prints an application/x-www-form-urlencoded body for `curl --data-binary`.
 // Real keys (e.g. a funded sepolia test key) must come from --key-env VAR, never --key, so the
 // secret does not appear in process listings; --key is for public test keys only.
@@ -74,6 +77,7 @@ export function runTx(verb, options, write = (line) => process.stdout.write(`${l
           ethereumTxHash: value(options, 'tx-hash'),
           key: spec.key ?? signer.privateKey,
           message,
+          namespace: value(options, 'namespace'),
           organization: value(options, 'organization'),
           proposalId,
         }), format));
@@ -86,6 +90,7 @@ export function runTx(verb, options, write = (line) => process.stdout.write(`${l
         ...keySpec(options),
         contentPath,
         ethereumTxHash: value(options, 'tx-hash'),
+        namespace: value(options, 'namespace'),
         proposalId: value(options, 'proposal-id') ?? newProposalId(),
       }), format));
       return 0;

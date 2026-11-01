@@ -125,6 +125,27 @@ const MEMBERSHIP_KEYS = [
   ['AERON_CLUSTER_BASE_PORT', 'aeronBase'],
 ];
 
+// Launch-record keys the lifecycle scripts consume. When the environment leaves one unset, the
+// scripts this console runs get the running cluster's recorded value, so a member restart or a
+// cluster start relaunches what is running: same ports and Aeron dirs, and the same sharding
+// flags (EXTRA_JAVA_OPTS) instead of an unsharded member. Format: lifecycle/lib/launch-record.sh.
+const RESTORED_LAUNCH_KEYS = [
+  'OAK_CLUSTER_NAME',
+  'OAK_VALIDATOR_HTTP_BASE_PORT',
+  'OAK_VALIDATOR_HTTP_PORT_STEP',
+  'AERON_CLUSTER_BASE_PORT',
+  'AERON_DIR_BASE',
+  'AERON_RAMDISK_ROOT',
+  'OAK_MOCK_EPOCH_DURATION_SECONDS',
+  'OAK_BLOCKCHAIN_MODE',
+  'OPS_PROXY_PORT',
+  'EXTRA_JAVA_OPTS',
+  'IPFS_GATEWAY_BASE',
+  'IPFS_LOCAL_GATEWAY_BASE',
+  // The jar path only: member.sh pins the recorded sha256 itself, and a cluster start re-hashes.
+  'OAK_CONSENSUS_JAR',
+];
+
 // Same precedence the lifecycle scripts use: explicit option, then environment, then the
 // launch record of the running cluster, then script defaults.
 export async function resolveConsoleConfig({ options = {}, env = process.env, repoRoot }) {
@@ -163,6 +184,7 @@ export async function resolveConsoleConfig({ options = {}, env = process.env, re
   const config = {
     aeronBase: toPort(pick('AERON_CLUSTER_BASE_PORT', 9000), 'AERON_CLUSTER_BASE_PORT'),
     clusterName: pick('OAK_CLUSTER_NAME', 'single-cluster'),
+    extraJavaOpts: pick('EXTRA_JAVA_OPTS', ''),
     home,
     httpBase: toPort(pick('OAK_VALIDATOR_HTTP_BASE_PORT', 8090), 'OAK_VALIDATOR_HTTP_BASE_PORT'),
     intervalMs: Number(option(options, 'interval-ms', DEFAULT_INTERVAL_MS)) || DEFAULT_INTERVAL_MS,
@@ -195,6 +217,12 @@ export async function resolveConsoleConfig({ options = {}, env = process.env, re
     }
   }
 
+  if (env.EXTRA_JAVA_OPTS && launch.EXTRA_JAVA_OPTS && env.EXTRA_JAVA_OPTS !== launch.EXTRA_JAVA_OPTS) {
+    config.warnings.push(
+      'EXTRA_JAVA_OPTS differs from the running cluster\'s launch record; restarted members would get a different shard map',
+    );
+  }
+
   config.childEnv = {
     ...env,
     CLUSTER_RUNTIME_ROOT: runtimeRoot,
@@ -203,6 +231,9 @@ export async function resolveConsoleConfig({ options = {}, env = process.env, re
     OAK_TUI: '0',
     PID_DIR: pidDir,
   };
+  for (const key of RESTORED_LAUNCH_KEYS) {
+    if (!env[key] && launch[key]) config.childEnv[key] = launch[key];
+  }
   if (sizeSource === 'option') config.childEnv.OAK_CLUSTER_SIZE = String(size);
   return config;
 }

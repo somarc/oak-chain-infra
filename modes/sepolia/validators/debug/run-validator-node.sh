@@ -25,7 +25,8 @@ detect_workspace_root() {
 }
 
 WORKSPACE_ROOT="$(detect_workspace_root)"
-if [ -z "$WORKSPACE_ROOT" ]; then
+# With an OAK_CONSENSUS_JAR override the workspace is optional (it only supplies .env.local).
+if [ -z "$WORKSPACE_ROOT" ] && [ -z "${OAK_CONSENSUS_JAR:-}" ]; then
     echo "❌ ERROR: Could not locate OAK workspace root (missing jackrabbit-oak)."
     echo "   Set OAK_ROOT explicitly and retry."
     exit 1
@@ -42,7 +43,7 @@ if [ -f "$MODE_CONFIG_FILE" ]; then
 fi
 
 # Load environment variables from .env.local if it exists (for API keys, etc.)
-if [ -f "$WORKSPACE_ROOT/.env.local" ]; then
+if [ -n "$WORKSPACE_ROOT" ] && [ -f "$WORKSPACE_ROOT/.env.local" ]; then
     echo "🔐 Loading environment variables from .env.local"
     set -a  # Auto-export all variables
     source "$WORKSPACE_ROOT/.env.local"
@@ -76,10 +77,49 @@ get_oak_version() {
 OAK_VERSION="${OAK_VERSION:-$(get_oak_version)}"
 echo "📦 Oak version: $OAK_VERSION"
 
+sha256_of_file() {
+    if command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | awk '{print $1}'
+    else
+        sha256sum "$1" | awk '{print $1}'
+    fi
+}
+
 # Find consensus JAR file (try multiple possible locations and names)
 JAR_FILE=""
+JAR_SHA256=""
+# OAK_CONSENSUS_JAR runs this exact jar (absolute path, must exist) instead of the search below.
+# OAK_CONSENSUS_JAR_SHA256 (set by start-cluster.sh and the launch record) pins its content, so a
+# jar rebuilt in place after the cluster was launched is refused instead of silently mixed in.
+if [ -n "${OAK_CONSENSUS_JAR:-}" ]; then
+    case "$OAK_CONSENSUS_JAR" in
+        /*) ;;
+        *)
+            echo "❌ ERROR: OAK_CONSENSUS_JAR must be an absolute path: $OAK_CONSENSUS_JAR"
+            exit 1
+            ;;
+    esac
+    if [ ! -f "$OAK_CONSENSUS_JAR" ]; then
+        echo "❌ ERROR: OAK_CONSENSUS_JAR does not exist: $OAK_CONSENSUS_JAR"
+        exit 1
+    fi
+    JAR_FILE="$OAK_CONSENSUS_JAR"
+    JAR_SHA256="$(sha256_of_file "$JAR_FILE")"
+    if [ -z "$JAR_SHA256" ]; then
+        echo "❌ ERROR: could not hash OAK_CONSENSUS_JAR: $JAR_FILE"
+        exit 1
+    fi
+    if [ -n "${OAK_CONSENSUS_JAR_SHA256:-}" ] && [ "$OAK_CONSENSUS_JAR_SHA256" != "$JAR_SHA256" ]; then
+        echo "❌ ERROR: OAK_CONSENSUS_JAR changed since the cluster was launched"
+        echo "   jar:      $JAR_FILE"
+        echo "   launched: $OAK_CONSENSUS_JAR_SHA256"
+        echo "   now:      $JAR_SHA256"
+        echo "   A member must run the jar its peers run. Restore that jar, or relaunch the whole cluster."
+        exit 1
+    fi
+    echo "📦 Consensus JAR override: $JAR_FILE (sha256 $JAR_SHA256)"
 # Try standard name first (shade plugin renames to oak-segment-consensus.jar)
-if [ -f "$WORKSPACE_ROOT/jackrabbit-oak/oak-segment-consensus/target/oak-segment-consensus.jar" ]; then
+elif [ -f "$WORKSPACE_ROOT/jackrabbit-oak/oak-segment-consensus/target/oak-segment-consensus.jar" ]; then
     JAR_FILE="$WORKSPACE_ROOT/jackrabbit-oak/oak-segment-consensus/target/oak-segment-consensus.jar"
 # Try standalone variant with version
 elif [ -f "$WORKSPACE_ROOT/jackrabbit-oak/oak-segment-consensus/target/oak-segment-consensus-${OAK_VERSION}-standalone.jar" ]; then
@@ -163,7 +203,7 @@ AERON_DIR="${AERON_DIR:-${AERON_DIR_BASE}-${NODE_ID}-driver}"
 BLOBSTORE_TYPE="${BLOBSTORE_TYPE:-ipfs}"
 IPFS_API_ENDPOINT="${IPFS_API_ENDPOINT:-/ip4/127.0.0.1/tcp/5001}"
 IPFS_GATEWAY_BASE="${IPFS_GATEWAY_BASE:-https://ipfs.io/ipfs/}"
-IPFS_LOCAL_GATEWAY_BASE="${IPFS_LOCAL_GATEWAY_BASE:-http://127.0.0.1:8099/ipfs/}"
+IPFS_LOCAL_GATEWAY_BASE="${IPFS_LOCAL_GATEWAY_BASE:-http://127.0.0.1:5080/ipfs/}"
 HEALTH_PEER_PROBE_MODE="${OAK_HEALTH_PEER_PROBE_MODE:-http}"
 AERON_SOCKET_SNDBUF="${AERON_SOCKET_SNDBUF:-16384}"
 AERON_SOCKET_RCVBUF="${AERON_SOCKET_RCVBUF:-16384}"
@@ -331,6 +371,9 @@ echo "📦 JAR Files:"
 echo "  Consensus JAR: $JAR_FILE"
 if [ -n "$JAR_MODIFIED" ]; then
     echo "  Consensus JAR Modified: $JAR_MODIFIED"
+fi
+if [ -n "$JAR_SHA256" ]; then
+    echo "  Consensus JAR sha256: $JAR_SHA256 (OAK_CONSENSUS_JAR override)"
 fi
 if [ -n "$AGENTIC_JAR_FILE" ]; then
     echo "  Agentic JAR: $AGENTIC_JAR_FILE"

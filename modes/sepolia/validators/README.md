@@ -58,7 +58,7 @@ Validator-only local operations for Oak Chain Sepolia mode.
 - `OPS_PROXY_PORT` (default: `8787`)
 - `IPFS_API_HTTP` (default: `http://127.0.0.1:5001`)
 - `IPFS_GATEWAY_BASE` (default: `https://ipfs.io/ipfs/`)
-- `IPFS_LOCAL_GATEWAY_BASE` (default: `http://127.0.0.1:8099/ipfs/`)
+- `IPFS_LOCAL_GATEWAY_BASE` (default: `http://127.0.0.1:5080/ipfs/`)
 - `IPFS_READY_TIMEOUT_SECONDS` (default: `30`)
 - `AUTO_START_IPFS` (default: `true`)
 - `IPFS_DAEMON_LOG_FILE` (default: `$HOME/oak-chain/logs/ipfs-daemon.log`)

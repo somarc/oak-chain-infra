@@ -4,6 +4,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/root-guard.sh
 source "$SCRIPT_DIR/lib/root-guard.sh"
+# shellcheck source=lib/launch-record.sh
+source "$SCRIPT_DIR/lib/launch-record.sh"
+# shellcheck source=lib/ipfs-gateway.sh
+source "$SCRIPT_DIR/lib/ipfs-gateway.sh"
 export OAK_BLOCKCHAIN_MODE="${OAK_BLOCKCHAIN_MODE:-mock}"
 export OAK_RATE_LIMIT_ENABLED="${OAK_RATE_LIMIT_ENABLED:-false}"
 export OAK_CLUSTER_ENV="${OAK_CLUSTER_ENV:-test}"
@@ -50,6 +54,11 @@ IPFS_READY_TIMEOUT_SECONDS="${IPFS_READY_TIMEOUT_SECONDS:-30}"
 AUTO_START_IPFS="${AUTO_START_IPFS:-true}"
 IPFS_DAEMON_LOG_FILE="${IPFS_DAEMON_LOG_FILE:-$LOG_DIR/ipfs-daemon.log}"
 IPFS_PID_FILE="${IPFS_PID_FILE:-$PID_DIR/ipfs-daemon.pid}"
+# Validators read these (run-validator-node.sh); the default lies outside every validator port
+# range (lib/ipfs-gateway.sh). IPFS_GATEWAY_BASE is written into committed content, so every
+# member of a cluster must run with the same value.
+export IPFS_GATEWAY_BASE="${IPFS_GATEWAY_BASE:-$OAK_IPFS_GATEWAY_DEFAULT_BASE}"
+export IPFS_LOCAL_GATEWAY_BASE="${IPFS_LOCAL_GATEWAY_BASE:-$OAK_IPFS_GATEWAY_DEFAULT_BASE}"
 NODES=()
 HTTP_PORTS=()
 
@@ -99,6 +108,8 @@ Environment:
   AUTO_START_IPFS            Auto-start IPFS daemon if API is unavailable (default: $AUTO_START_IPFS)
   IPFS_DAEMON_LOG_FILE       Log file for auto-started IPFS daemon (default: $IPFS_DAEMON_LOG_FILE)
   IPFS_PID_FILE              PID file for auto-started IPFS daemon (default: $IPFS_PID_FILE)
+  IPFS_GATEWAY_BASE          Gateway base written into content (default: $IPFS_GATEWAY_BASE)
+  IPFS_LOCAL_GATEWAY_BASE    Local gateway base; a new ~/.ipfs repo is initialized with its port (default: $IPFS_LOCAL_GATEWAY_BASE)
   CLUSTER_RUNTIME_ROOT       Root directory for stores/logs/pids (default: $CLUSTER_RUNTIME_ROOT)
   OAK_CLUSTER_NAME           Logical cluster label used by status output and 3x2 packs (default: $CLUSTER_NAME)
   OAK_VALIDATOR_HTTP_BASE_PORT Base HTTP port for validator-0 (default: $VALIDATOR_HTTP_BASE_PORT)
@@ -118,6 +129,7 @@ Environment:
   OAK_QUEUE_TUNING_SYSTEM_PROP_FALLBACK true|false (default true). Keep JVM -D fallback while validating OSGi pickup.
   OAK_MOCK_EPOCH_DURATION_SECONDS       Mock GC epoch duration in seconds (default: $MOCK_EPOCH_SECONDS).
   OAK_RATE_LIMIT_ENABLED                true|false HTTP rate limiting (default false in mock mode).
+  OAK_CONSENSUS_JAR                     Absolute path of the consensus jar every member runs (default: workspace search).
 EOF
 }
 
@@ -170,6 +182,32 @@ if [ "$CLUSTER_SIZE" != "3" ] && [ "$CLUSTER_SIZE" != "5" ]; then
   echo "Invalid OAK_CLUSTER_SIZE=$CLUSTER_SIZE (expected 3 or 5)"
   exit 1
 fi
+
+# OAK_CONSENSUS_JAR: every member runs this exact jar (debug/run-validator-node.sh). Its sha256 is
+# taken once here, passed to every member and kept in the launch record, so a member never runs a
+# jar rebuilt in place after the launch.
+if [ -n "${OAK_CONSENSUS_JAR:-}" ]; then
+  case "$OAK_CONSENSUS_JAR" in
+    /*) ;;
+    *) echo "❌ OAK_CONSENSUS_JAR must be an absolute path: $OAK_CONSENSUS_JAR"; exit 1 ;;
+  esac
+  if [ ! -f "$OAK_CONSENSUS_JAR" ]; then
+    echo "❌ OAK_CONSENSUS_JAR does not exist: $OAK_CONSENSUS_JAR"
+    exit 1
+  fi
+  if [ "$BUILD_ON_START" = "true" ]; then
+    echo "❌ --build builds the workspace jar, which OAK_CONSENSUS_JAR overrides; build that jar yourself."
+    exit 1
+  fi
+  jar_sha256="$( (shasum -a 256 "$OAK_CONSENSUS_JAR" 2>/dev/null || sha256sum "$OAK_CONSENSUS_JAR") | awk '{print $1}')"
+  if [ -n "${OAK_CONSENSUS_JAR_SHA256:-}" ] && [ "$OAK_CONSENSUS_JAR_SHA256" != "$jar_sha256" ]; then
+    echo "❌ OAK_CONSENSUS_JAR_SHA256=$OAK_CONSENSUS_JAR_SHA256 but $OAK_CONSENSUS_JAR hashes to $jar_sha256"
+    exit 1
+  fi
+  export OAK_CONSENSUS_JAR
+  export OAK_CONSENSUS_JAR_SHA256="$jar_sha256"
+  echo "• Consensus JAR override: $OAK_CONSENSUS_JAR (sha256 $OAK_CONSENSUS_JAR_SHA256)"
+fi
 export OAK_CLUSTER_SIZE="$CLUSTER_SIZE"
 export OAK_MOCK_EPOCH_DURATION_SECONDS="$MOCK_EPOCH_SECONDS"
 
@@ -206,7 +244,7 @@ cluster_wallet_address() {
 }
 
 generate_cluster_wallet() {
-  local jar_file="$OAK_ROOT/jackrabbit-oak/oak-segment-consensus/target/oak-segment-consensus.jar"
+  local jar_file="${OAK_CONSENSUS_JAR:-$OAK_ROOT/jackrabbit-oak/oak-segment-consensus/target/oak-segment-consensus.jar}"
   if [ ! -f "$jar_file" ]; then
     echo "❌ Cannot generate cluster wallet: missing $jar_file"
     return 1
@@ -648,7 +686,7 @@ consensus_jar_is_stale() {
 }
 
 warn_if_consensus_jar_stale() {
-  if [ "$BUILD_ON_START" = "true" ]; then
+  if [ "$BUILD_ON_START" = "true" ] || [ -n "${OAK_CONSENSUS_JAR:-}" ]; then
     return 0
   fi
 
@@ -716,6 +754,14 @@ start_ipfs_daemon_if_needed() {
     if ! ipfs init >/dev/null 2>&1; then
       echo "⚠️  Failed to initialize IPFS repo automatically"
       return 1
+    fi
+    # Kubo's default gateway (8080) is often taken; serve it where the validators look for it.
+    local gateway_addr
+    gateway_addr="$(oak_ipfs_gateway_multiaddr "$IPFS_LOCAL_GATEWAY_BASE")"
+    if [ -n "$gateway_addr" ]; then
+      echo "  - Setting IPFS gateway address to $gateway_addr"
+      ipfs config Addresses.Gateway "$gateway_addr" >/dev/null 2>&1 \
+        || echo "⚠️  Could not set Addresses.Gateway; run: $(oak_ipfs_gateway_fix_hint "$IPFS_LOCAL_GATEWAY_BASE")"
     fi
   fi
 
@@ -808,6 +854,36 @@ if ! ensure_ipfs_ready; then
   exit 1
 fi
 
+# An existing ~/.ipfs repo keeps its own Addresses.Gateway. Fail when it sits on one of this
+# cluster's ports (validator-4's standby is 8099 in a 5-member cluster on base 8090); otherwise
+# only warn that the validators' local gateway links point elsewhere.
+check_ipfs_gateway_port() {
+  local expected daemon_ports port cluster_ports
+  expected="$(oak_guard_url_port "$IPFS_LOCAL_GATEWAY_BASE")"
+  daemon_ports="$(oak_ipfs_daemon_gateway_ports "$IPFS_API_HTTP")"
+  [ -n "$daemon_ports" ] || return 0
+  cluster_ports=" $(oak_guard_cluster_ports "$CLUSTER_SIZE" "$VALIDATOR_HTTP_BASE_PORT" "$VALIDATOR_HTTP_PORT_STEP" "$AERON_CLUSTER_BASE_PORT" | tr '\n' ' ') $OPS_PROXY_PORT "
+  for port in $daemon_ports; do
+    case "$cluster_ports" in
+      *" $port "*)
+        echo "❌ The IPFS daemon's gateway listens on port $port, which this ${CLUSTER_SIZE}-member cluster needs."
+        echo "   Move the gateway (with the daemon stopped): $(oak_ipfs_gateway_fix_hint "$IPFS_LOCAL_GATEWAY_BASE")"
+        echo "   then restart the daemon. See TROUBLESHOOTING.md (IPFS gateway on a validator port)."
+        return 1
+        ;;
+    esac
+  done
+  case " $(echo "$daemon_ports" | tr '\n' ' ') " in
+    *" $expected "*) return 0 ;;
+  esac
+  echo "⚠️  The IPFS daemon's gateway listens on port(s) $(echo "$daemon_ports" | tr '\n' ' ')but IPFS_LOCAL_GATEWAY_BASE is $IPFS_LOCAL_GATEWAY_BASE."
+  echo "   Validators will hand out local gateway links that do not resolve. To align the daemon (stopped):"
+  echo "   $(oak_ipfs_gateway_fix_hint "$IPFS_LOCAL_GATEWAY_BASE")"
+}
+if ! check_ipfs_gateway_port; then
+  exit 1
+fi
+
 warn_if_consensus_jar_stale
 
 if [ "$BUILD_ON_START" = "true" ]; then
@@ -835,28 +911,82 @@ if [ "$FRESH" = "true" ]; then
   preflight_cleanup
 fi
 
+# Members still running from an earlier launch keep the IPFS_GATEWAY_BASE they were launched
+# with, and it is written into committed content. Refuse to launch the rest with another value
+# (records from before the gateway was recorded imply the old 8099 default).
+require_gateway_matches_running_members() {
+  local record="$PID_DIR/cluster-launch.env" recorded node running=""
+  [ -f "$record" ] || return 0
+  for node in "${NODES[@]}"; do
+    if is_pid_alive "$(cat "$PID_DIR/validator-${node}.pid" 2>/dev/null || true)"; then
+      running="$running validator-$node"
+    fi
+  done
+  [ -n "$running" ] || return 0
+  recorded="$(oak_launch_record_get "$record" IPFS_GATEWAY_BASE || echo "$OAK_LEGACY_IPFS_GATEWAY_BASE")"
+  [ "$recorded" = "$IPFS_GATEWAY_BASE" ] && return 0
+  echo "❌ Running members ($running ) were launched with IPFS_GATEWAY_BASE=$recorded;"
+  echo "   this start would launch the others with IPFS_GATEWAY_BASE=$IPFS_GATEWAY_BASE."
+  echo "   The gateway base is written into committed content, so members must agree. Either"
+  echo "   export IPFS_GATEWAY_BASE=$recorded IPFS_LOCAL_GATEWAY_BASE=$recorded, or stop the cluster first."
+  return 1
+}
+if ! require_gateway_matches_running_members; then
+  exit 1
+fi
+
+# Members still running from an earlier launch run the recorded jar; refuse to launch the rest
+# with another one (an empty record value means the default workspace search).
+require_jar_matches_running_members() {
+  local record="$PID_DIR/cluster-launch.env" node running="" recorded_jar recorded_sha
+  [ -f "$record" ] || return 0
+  for node in "${NODES[@]}"; do
+    if is_pid_alive "$(cat "$PID_DIR/validator-${node}.pid" 2>/dev/null || true)"; then
+      running="$running validator-$node"
+    fi
+  done
+  [ -n "$running" ] || return 0
+  recorded_jar="$(oak_launch_record_get "$record" OAK_CONSENSUS_JAR || true)"
+  recorded_sha="$(oak_launch_record_get "$record" OAK_CONSENSUS_JAR_SHA256 || true)"
+  if [ "$recorded_jar" = "${OAK_CONSENSUS_JAR:-}" ] && [ "$recorded_sha" = "${OAK_CONSENSUS_JAR_SHA256:-}" ]; then
+    return 0
+  fi
+  echo "❌ Running members ($running ) were launched with OAK_CONSENSUS_JAR=${recorded_jar:-<workspace search>} (sha256 ${recorded_sha:-n/a});"
+  echo "   this start would launch the others with OAK_CONSENSUS_JAR=${OAK_CONSENSUS_JAR:-<workspace search>} (sha256 ${OAK_CONSENSUS_JAR_SHA256:-n/a})."
+  echo "   Members must run the same jar. Stop the cluster first, or start with the recorded jar."
+  return 1
+}
+if ! require_jar_matches_running_members; then
+  exit 1
+fi
+
 # Membership-critical launch settings, read by member.sh (and the mock console) so a member
 # restarted on its own rejoins with exactly the membership its peers were launched with.
+# EXTRA_JAVA_OPTS carries the sharding flags of multi-cluster topologies; without it a
+# restarted member would come back unsharded. Format: lib/launch-record.sh.
 write_launch_record() {
-  local record="$PID_DIR/cluster-launch.env"
-  {
-    echo "# Written by start-cluster.sh at launch; read by member.sh. Do not edit."
-    echo "OAK_CLUSTER_NAME=$CLUSTER_NAME"
-    echo "OAK_CLUSTER_SIZE=$CLUSTER_SIZE"
-    echo "OAK_VALIDATOR_HTTP_BASE_PORT=$VALIDATOR_HTTP_BASE_PORT"
-    echo "OAK_VALIDATOR_HTTP_PORT_STEP=$VALIDATOR_HTTP_PORT_STEP"
-    echo "AERON_CLUSTER_BASE_PORT=$AERON_CLUSTER_BASE_PORT"
-    echo "AERON_DIR_BASE=${AERON_DIR_BASE:-}"
-    echo "AERON_RAMDISK_ROOT=${AERON_RAMDISK_ROOT:-}"
-    echo "OAK_MOCK_EPOCH_DURATION_SECONDS=$MOCK_EPOCH_SECONDS"
-    echo "OAK_BLOCKCHAIN_MODE=$OAK_BLOCKCHAIN_MODE"
-    echo "OPS_PROXY_PORT=$OPS_PROXY_PORT"
-    echo "IPFS_API_HTTP=$IPFS_API_HTTP"
-    echo "LAUNCHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  } > "$record.tmp"
-  mv "$record.tmp" "$record"
+  oak_launch_record_write "$PID_DIR/cluster-launch.env" \
+    "OAK_CLUSTER_NAME=$CLUSTER_NAME" \
+    "OAK_CLUSTER_SIZE=$CLUSTER_SIZE" \
+    "OAK_VALIDATOR_HTTP_BASE_PORT=$VALIDATOR_HTTP_BASE_PORT" \
+    "OAK_VALIDATOR_HTTP_PORT_STEP=$VALIDATOR_HTTP_PORT_STEP" \
+    "AERON_CLUSTER_BASE_PORT=$AERON_CLUSTER_BASE_PORT" \
+    "AERON_DIR_BASE=${AERON_DIR_BASE:-}" \
+    "AERON_RAMDISK_ROOT=${AERON_RAMDISK_ROOT:-}" \
+    "OAK_MOCK_EPOCH_DURATION_SECONDS=$MOCK_EPOCH_SECONDS" \
+    "OAK_BLOCKCHAIN_MODE=$OAK_BLOCKCHAIN_MODE" \
+    "OPS_PROXY_PORT=$OPS_PROXY_PORT" \
+    "IPFS_API_HTTP=$IPFS_API_HTTP" \
+    "IPFS_GATEWAY_BASE=$IPFS_GATEWAY_BASE" \
+    "IPFS_LOCAL_GATEWAY_BASE=$IPFS_LOCAL_GATEWAY_BASE" \
+    "EXTRA_JAVA_OPTS=${EXTRA_JAVA_OPTS:-}" \
+    "OAK_CONSENSUS_JAR=${OAK_CONSENSUS_JAR:-}" \
+    "OAK_CONSENSUS_JAR_SHA256=${OAK_CONSENSUS_JAR_SHA256:-}" \
+    "LAUNCHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
-write_launch_record
+if ! write_launch_record; then
+  exit 1
+fi
 
 for node in "${NODES[@]}"; do
   pid_file="$PID_DIR/validator-${node}.pid"

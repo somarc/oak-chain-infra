@@ -144,7 +144,28 @@ oak_guard_require_owned_ports() {
   printf '%s\n' "$foreign" | sed 's/^/     :/' >&2
   oak_guard_say "   They probably belong to a cluster launched under another CLUSTER_RUNTIME_ROOT."
   oak_guard_say "   Stop that cluster from its own root, or bind this run to different ports."
+  oak_guard_ipfs_hint "$foreign"
   return 1
+}
+
+# Explain a cluster port held by the IPFS daemon: an old ~/.ipfs repo serves its gateway on 8099,
+# validator-4's second HTTP port in a 5-member cluster on base 8090 (lib/ipfs-gateway.sh).
+oak_guard_ipfs_hint() {
+  local port pid cmd gateway_port
+  while read -r port pid cmd; do
+    case " $cmd" in
+      *[/\ ]ipfs\ daemon* | *[/\ ]kubo\ daemon*) ;;
+      *) continue ;;
+    esac
+    gateway_port="$(oak_guard_url_port "${IPFS_LOCAL_GATEWAY_BASE:-http://127.0.0.1:5080/ipfs/}")"
+    oak_guard_say "   Port $port is held by the IPFS daemon (pid $pid), most likely its gateway (Addresses.Gateway)."
+    oak_guard_say "   Validator ports must not overlap it. With the validators and the daemon stopped, run:"
+    oak_guard_say "     ipfs config Addresses.Gateway /ip4/127.0.0.1/tcp/${gateway_port}"
+    oak_guard_say "   then restart the daemon (see TROUBLESHOOTING.md, IPFS gateway on a validator port)."
+    return 0
+  done <<EOF
+$1
+EOF
 }
 
 # Class D gate for --fresh: disposable root, and every cluster port free or owned by ROOT.

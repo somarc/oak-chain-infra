@@ -1,5 +1,44 @@
 # Validator Troubleshooting
 
+## IPFS gateway on a validator port
+
+Each validator binds two HTTP ports: `base + n*step` and `base + 1 + n*step`. In a 5-member
+cluster on base `8090` that is `8090`-`8099`; validator-4's second port is `8099`. The local
+IPFS gateway used to default to `8099` too, so while the daemon ran, a 5-member topology
+(`single-cluster-5`, `5x3`, `5x3x3`) either could not bind validator-4 or was refused by the
+`--fresh` root guard ("port 8099 is held by the IPFS daemon").
+
+The gateway default is now `127.0.0.1:5080` (`lifecycle/lib/ipfs-gateway.sh`): next to Kubo's
+other ports (swarm `4001`, API `5001`) and outside every validator range (`8090`-`8099`,
+`8190`-`8199`, `8290`-`8299`), the OPS proxies (`8787`-`8789`) and Aeron (`9000`-`10006`).
+Kubo's own default, `8080`, is avoided because Docker and dev servers commonly hold it.
+
+An existing `~/.ipfs` repo keeps its own `Addresses.Gateway` until it is reconfigured;
+`start-cluster.sh` sets the port only when it initializes a new repo. Check it with
+`ipfs config Addresses.Gateway`. To move it, stop every cluster that uses the daemon (the
+validators' blob store talks to it), stop the daemon, then run:
+
+```bash
+ipfs config Addresses.Gateway /ip4/127.0.0.1/tcp/5080
+ipfs daemon   # or let start-cluster.sh auto-start it
+```
+
+Then relaunch each cluster with `start-cluster.sh` so all its members pick up the `5080` bases
+together.
+
+Until then:
+
+- `start-cluster.sh` warns that the validators' local gateway links point elsewhere, and fails
+  when the daemon's gateway sits on one of the cluster's own ports (any 5-member cluster on
+  base `8090`).
+- 3-member clusters still run; to keep the old port for them, export
+  `IPFS_GATEWAY_BASE=http://127.0.0.1:8099/ipfs/` and
+  `IPFS_LOCAL_GATEWAY_BASE=http://127.0.0.1:8099/ipfs/`.
+- `member.sh` restarts members of a cluster launched before this change with the old `8099`
+  bases (their launch record has no gateway keys), and refuses an `IPFS_GATEWAY_BASE` in the
+  environment that differs from the one the cluster was launched with. `start-cluster.sh`
+  refuses the same mismatch while any member of the root is still running.
+
 ## 3x2 Local Sharding: Aeron Collision Findings
 
 The first local `3x2` sharding proof on `2026-03-22` exposed two separate

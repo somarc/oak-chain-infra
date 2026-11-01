@@ -74,6 +74,86 @@ still routes to the same shard; roles therefore use distinct first bytes.
   - Fast two-cluster sharding and redirect proof.
 - `routing/sharding-3x3-smoke.sh`
   - Three-cluster authoritative routing proof.
+- What both routing smokes assert, through `lib/_sharding_health_lib.sh`
+  (JSON checks in `lib/sharding_health.py`):
+  - on every member of every cluster, not just validator-0: `sharding.enabled`,
+    `localPrefixes`, `remoteMountCount` (a config echo, kept as sanity) and
+    `authoritativeStoreSeparated`;
+  - `sharding.configDigest` is identical across the members of each cluster; a
+    divergent member is named by port;
+  - before any routing or visibility assertion, every member reports
+    `remoteEndpointsAvailable == remoteEndpointCount` within `READ_TIMEOUT_SECONDS`;
+    otherwise the smoke fails with each unavailable mount's endpoint, circuit and
+    `lastError`;
+  - write messages carry a per-run nonce (`SMOKE_RUN_NONCE`, default
+    timestamp-pid-random), so a rerun on a reused runtime root cannot pass on
+    content an earlier run left behind.
+  - They require a runtime whose `/health` reports per-mount health
+    (`configDigest`, `remoteEndpointCount`, `remoteEndpointsAvailable`,
+    `remoteMounts`); against an older runtime they fail fast, naming
+    `oak-segment-consensus` `fix/cluster-of-clusters-phase0`.
+- `surfaces/proposal-surfaces-3x2.sh` runs the same mount gate before every
+  "absent on all ports" check: a member whose remote mount is down answers 404
+  for remote paths, so absence would otherwise pass vacuously.
+- `routing/federation-3x2-smoke.sh`
+  - Enterprise-federation proof on the `fed-3x2` topology (two clusters, one
+    enterprise each, a static-file directory instead of `oak.sharding.*`
+    routes). Needs a jar from `jackrabbit-oak` `feature/enterprise-federation`.
+  - Assumes both clusters run (`../lifecycle/start-fed-3x2.sh`); never starts,
+    stops or signals anything. It writes the shared directory file itself.
+  - Phases: P0 preflight (members up, pids, one jar sha256, launch flags),
+    P1 charter (one charterDigest and clusterId per cluster,
+    `charterMatchesConfig`, different clusterIds; `400
+    namespace_requires_federation` before any directory), P2 directory epoch
+    E1 (all six members converge on one digest; content, prevDigest,
+    `federated`, `localNamespaces`), P3 writes and deletes (own-namespace 202
+    committed on every member, `307 wrong_cluster` with the owner's first
+    endpoint, listed writer into another namespace 202 with the wallet node's
+    `wallet` = the namespace, `403 writer_not_authorized`, `403
+    namespace_unclaimed`), P4 cross-cluster reads through verified directory
+    mounts, P5 directory epoch E2 (writer removed: prevDigest chains, the
+    writer gets 403), P6 end state (health, pids unchanged, no unexpected
+    5xx, no ERROR-level federation lines appended to any validator log).
+  - E1 is one above the committed (or file) epoch, so a rerun on kept roots
+    continues at E1+2; the unfederated 400 probe then becomes a diagnostic
+    UNKNOWN (start with `--fresh` to cover it).
+  - Bounded: under 30 write/delete requests, a deadline on every wait
+    (`FED_SMOKE_DEADLINE_SECONDS`, default 60; `FED_SMOKE_POLL_MS`, default
+    2000); aborts on the first unexpected 5xx or a member that stops answering
+    and leaves everything running. Tolerated: `no_quorum` retries and `503`
+    from a mount that is still unavailable, both recorded.
+  - Evidence: one sealed (read-only) directory per run,
+    `$FED_3X2_ROOT/evidence/<UTC timestamp>/` with `manifest.json`,
+    `requests.ndjson`, `snapshots/<phase>/`, `directory-epoch-N.json`,
+    `log-scan.json`, `assertions.tsv` (PASS / FAIL / UNKNOWN), `summary.json`
+    and `report.md`. Logic and fixture tests: `src/federation-smoke.mjs`,
+    `test/federation-smoke.test.mjs`. Exit 0 PASS, 1 FAIL, 2 refused.
+  - `status.localNamespaces` is the count of namespaces the local enterprise
+    owns; which ones is asserted on the committed directory.
+- `routing/federation-3x2-failover.sh`
+  - ONE bounded fault on the running `fed-3x2` topology, after the smoke
+    (directory committed, A owns nsA1). Logic: `src/federation-failover.mjs`
+    on the shared evidence session `src/federation-session.mjs`; fake-federation
+    tests: `test/federation-failover.test.mjs` (`fixtures/fake-federation.mjs`).
+  - F0 picks the victim: the cluster-A endpoint most B members' directory
+    mounts read from (`activeEndpoint`; ties to the lowest member), records
+    whether it leads A and its pid. F1 commits a baseline nsA1 write, read by
+    every B member. F2 stops exactly the victim with
+    `lifecycle/member.sh stop N` under `config/fed-3x2-cluster-a.env` (graceful;
+    member.sh escalates after `STOP_WAIT_SECONDS`), sampling B reads meanwhile.
+    F3, within `FED_FAILOVER_SECONDS` (90) of the stop: a leader among the
+    survivors commits a second write on both; every B mount for A is verified
+    and available on another endpoint; until then each B read of the baseline
+    is the content or a 503, never missing (outcomes counted); then both writes
+    read on every B member. F4 restarts the victim with `member.sh start N`
+    (the launch record's jar): UP within `FED_RECOVERY_SECONDS` (120) with its
+    peers' charterDigest, clusterId and directory digest, serving both writes.
+    F5: six members up, no other pid changed, no 5xx but the fault-window
+    mount 503s; the log scan is reported (diagnostic: the outage may log).
+  - On any other surprise it aborts and leaves everything as it is; a victim
+    left stopped is named with its restart command in `report.md`. Evidence:
+    `$FED_3X2_ROOT/evidence/failover-<UTC>/` (smoke format plus
+    `failover.json`, `member-stop.log`, `member-start.log`).
 - `stability/aeron-warm-failover-smoke.sh`
   - Repeated failover loop for confidence in recovery over multiple cycles.
 - `stability/aeron-quorum-envelope-smoke.sh`
@@ -90,7 +170,10 @@ still routes to the same shard; roles therefore use distinct first bytes.
 - Validator cluster running, or a suite that can start one.
 - `curl` and `python3` installed.
 - `jq` recommended.
-- Local IPFS available when running binary/IPFS or proposal suites.
+- Local IPFS available when running binary/IPFS or proposal suites. Its gateway
+  belongs on `127.0.0.1:5080`, off every validator port; an older `~/.ipfs`
+  keeps `8099` until reconfigured (`../TROUBLESHOOTING.md`, IPFS gateway on a
+  validator port).
 
 ## Usage
 
@@ -100,6 +183,11 @@ still routes to the same shard; roles therefore use distinct first bytes.
 
 # Fast routing proof
 ./routing/sharding-3x2-smoke.sh
+
+# Enterprise federation proof (clusters from ../lifecycle/start-fed-3x2.sh)
+OAK_CONSENSUS_JAR=/abs/path/oak-segment-consensus.jar ./routing/federation-3x2-smoke.sh
+# One bounded fault on the same clusters, after the smoke
+OAK_CONSENSUS_JAR=/abs/path/oak-segment-consensus.jar ./routing/federation-3x2-failover.sh
 
 # Single-cluster acceptance gate
 bash ./surfaces/proposal-surfaces-single-cluster.sh

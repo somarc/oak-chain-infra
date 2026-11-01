@@ -17,6 +17,7 @@ Accepted as form-urlencoded or multipart (`http/server/handlers/WriteProposalHan
 | `message` | Any string; no length or character rules. It is **signed verbatim**. If empty, the API substitutes `"Test content at <ts>"`. | — | same |
 | `contentType` | Any string; defaults to `page`. | — | same |
 | `organization` | Optional; `^[a-zA-Z0-9_-]{1,64}$` (`WalletPathUtil.validateOrganization`). | API 400 | same |
+| `namespace` | Optional, `jackrabbit-oak` `feature/enterprise-federation`: the enterprise namespace (an address) a listed writer writes into; default the signer's wallet. Lower-cased. **Not covered by the signature.** With a committed directory: 202 when this cluster's ACTIVE enterprise owns it and the signer is the namespace wallet or a listed writer, else `307 wrong_cluster`, `403 namespace_unclaimed`, `403 writer_not_authorized` or `503 enterprise_inactive`; without a directory a namespace other than the signer is `400 namespace_requires_federation`. Content lands under `/oak-chain/XX/YY/ZZ/<namespace>/`. Deletes take the same field. | API (`ShardWriteAuthorityEnforcer`) and replicated apply (`NamespaceAuthority`) | same |
 | `paymentTier` | Accepted but **not read**. The tier comes from the settlement proof. | — | ignored |
 | Binary | Either `ipfsCid` (enterprise clients only, and the CID must already be known to the validator, otherwise 403/422) **or** a validator-hosted upload (multipart file, `binaryData`, `intentToken`). Not both. | API 400/403/422 | same |
 | Client registration | The wallet must be registered via `/v1/register-client` (otherwise 403). | API | valid addresses are auto-registered |
@@ -53,7 +54,7 @@ Still open (source-confirmed, not reproduced): packing sorts a wallet's proposal
 
 ## Conformant builder in this repo
 
-`src/tx.mjs` (CLI: `oak-chain tx key|write|delete|verify`) is the single builder that every script and the harness use.
+`src/tx.mjs` (CLI: `oak-chain tx key|write|delete|verify`, `--namespace 0x…` for federated writes and deletes) is the single builder that every script and the harness use.
 - **Proof against the runtime:** `test/tx.test.mjs` verifies its signatures with the validator jar's own `EthereumSignatureVerifier`, covering ASCII, empty, quotes, unicode, astral characters, content paths and long messages, plus a standard EIP-191 signature over non-ASCII text (accepted) and an old UTF-16-length one (rejected). Wrong signers and wrong messages must be rejected. `OAK_CONSENSUS_JAR` points the test at another build of the jar.
 - **Test keys:** deterministic and public by design (`--index N`, or `--prefix HH` for a shard-local wallet). They exist only for test traffic.
 

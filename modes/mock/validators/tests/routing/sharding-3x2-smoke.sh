@@ -14,12 +14,21 @@ WALLET_B="${WALLET_B:-0x8800000000000000000000000000000000000000}"
 # first byte, i.e. `oak-chain tx key --prefix HH` (modes/mock/lib/oak-tx.sh).
 # shellcheck source=../../../lib/oak-tx.sh
 source "$TESTS_DIR/../../lib/oak-tx.sh"
+# shellcheck source=../lib/_sharding_health_lib.sh
+source "$TESTS_DIR/lib/_sharding_health_lib.sh"
 WALLET_A="$(test_wallet_for_address "$WALLET_A")"
 WALLET_B="$(test_wallet_for_address "$WALLET_B")"
 READ_TIMEOUT_SECONDS="${READ_TIMEOUT_SECONDS:-30}"
 READ_POLL_INTERVAL_SECONDS="${READ_POLL_INTERVAL_SECONDS:-1}"
 NO_QUORUM_RETRY_MAX="${NO_QUORUM_RETRY_MAX:-15}"
 NO_QUORUM_RETRY_DELAY_SECONDS="${NO_QUORUM_RETRY_DELAY_SECONDS:-2}"
+# Every write message carries this run's nonce, so a rerun on a reused runtime root cannot pass
+# on content an earlier run left behind.
+SMOKE_RUN_NONCE="${SMOKE_RUN_NONCE:-$(date +%Y%m%dT%H%M%S)-$$-${RANDOM}}"
+
+smoke_message() {
+  printf '[3x2 smoke %s] %s' "$SMOKE_RUN_NONCE" "$1"
+}
 
 REQUEST_STATUS=""
 REQUEST_LOCATION=""
@@ -79,18 +88,6 @@ else:
 PY
 }
 
-fetch_json() {
-  local url="$1"
-  local body_file
-  body_file="$(mktemp)"
-  local code
-  code="$(curl -s -o "$body_file" -w "%{http_code}" "$url" || echo "000")"
-  local body
-  body="$(cat "$body_file")"
-  rm -f "$body_file"
-  printf '%s\n%s\n' "$code" "$body"
-}
-
 submit_write() {
   local base_url="$1"
   local wallet="$2"
@@ -104,7 +101,7 @@ submit_write() {
   # Conformant transaction from the shared builder: signed by the wallet's test key over
   # exactly the message, ethereumTxHash = proposalId. Resent unchanged on no_quorum retries.
   local form
-  form="$(oak_tx_as "$wallet" write --message "[3x2 smoke] ${label}" --content-type page)" || {
+  form="$(oak_tx_as "$wallet" write --message "$(smoke_message "$label")" --content-type page)" || {
     echo "❌ could not build a signed write for wallet ${wallet}" >&2
     exit 1
   }
@@ -355,6 +352,12 @@ wait_for_cluster_wallet_message() {
   local expected_message="$6"
   local purpose="$7"
 
+  # Remote content is read through this cluster's remote mounts: wait until they are available.
+  local ports
+  ports="$(cluster_ports "$cluster_size" "$http_base_port" "$http_port_step" | tr '\n' ' ')"
+  # shellcheck disable=SC2086
+  sharding_wait_mounts_available "$READ_TIMEOUT_SECONDS" $ports || exit 1
+
   local port
   while IFS= read -r port; do
     wait_for_wallet_message "$port" "$wallet" "$expected_message" "${cluster_name} ${purpose}"
@@ -376,18 +379,13 @@ read_cluster_state() {
   echo "   runtime-root=${runtime_root}"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-  local result
-  result="$(fetch_json "http://127.0.0.1:${http_base_port}/health")"
-  local code
-  local body
-  code="$(printf '%s' "$result" | sed -n '1p')"
-  body="$(printf '%s' "$result" | sed -n '2,$p')"
-
-  assert_equals "$code" "200" "${cluster_name} /health"
-  assert_equals "$(extract_json_field "$body" "sharding.enabled")" "true" "${cluster_name} sharding.enabled"
-  assert_equals "$(extract_json_field "$body" "sharding.localPrefixes")" "$expected_prefixes" "${cluster_name} localPrefixes"
-  assert_equals "$(extract_json_field "$body" "sharding.remoteMountCount")" "$expected_remote_mounts" "${cluster_name} remoteMountCount"
-  assert_equals "$(extract_json_field "$body" "sharding.authoritativeStoreSeparated")" "true" "${cluster_name} authoritativeStoreSeparated"
+  # Every member, not just validator-0: one unsharded or differently configured member
+  # serves a different shard map. remoteMountCount is a config echo (sanity only); the
+  # configDigest comparison and the mount-availability gate below carry the proof.
+  local ports
+  ports="$(cluster_ports "$cluster_size" "$http_base_port" "$http_port_step" | tr '\n' ' ')"
+  # shellcheck disable=SC2086
+  sharding_assert_cluster_members "$cluster_name" "$expected_prefixes" "$expected_remote_mounts" $ports || exit 1
 }
 
 A_INFO="$(resolve_cluster "$CLUSTER_A_CONFIG")"
@@ -399,12 +397,20 @@ read_cluster_state "$CLUSTER_A_CONFIG" "Cluster A Health" "00-7f" "128"
 echo ""
 read_cluster_state "$CLUSTER_B_CONFIG" "Cluster B Health" "80-ff" "128"
 echo ""
+# No routing or visibility assertion until every member of every cluster can reach its remote
+# mounts; an unavailable mount makes remote reads fail (and absence checks pass vacuously).
+ALL_PORTS=""
+ALL_PORTS="${ALL_PORTS} $(cluster_ports "$A_SIZE" "$A_HTTP_BASE" "$A_HTTP_STEP" | tr '\n' ' ')"
+ALL_PORTS="${ALL_PORTS} $(cluster_ports "$B_SIZE" "$B_HTTP_BASE" "$B_HTTP_STEP" | tr '\n' ' ')"
+# shellcheck disable=SC2086
+sharding_wait_mounts_available "$READ_TIMEOUT_SECONDS" $ALL_PORTS || exit 1
+echo ""
 
 leader_port="$(resolve_leader_port "cluster-a" "$A_SIZE" "$A_HTTP_BASE" "$A_HTTP_STEP")"
 echo "✅ cluster-a local submit leader: port=${leader_port}"
 submit_write "http://127.0.0.1:${leader_port}" "$WALLET_A" "local-write-a"
 assert_local_write_result "$REQUEST_STATUS" "$REQUEST_LOCATION" "cluster-a" "$A_SIZE" "$A_HTTP_BASE" "$A_HTTP_STEP"
-MESSAGE_A="[3x2 smoke] local-write-a"
+MESSAGE_A="$(smoke_message "local-write-a")"
 
 submit_write "http://127.0.0.1:${B_HTTP_BASE}" "$WALLET_A" "foreign-write-a-on-b"
 assert_equals "$REQUEST_STATUS" "307" "cluster-b foreign write redirect"
@@ -417,7 +423,7 @@ leader_port="$(resolve_leader_port "cluster-b" "$B_SIZE" "$B_HTTP_BASE" "$B_HTTP
 echo "✅ cluster-b local submit leader: port=${leader_port}"
 submit_write "http://127.0.0.1:${leader_port}" "$WALLET_B" "local-write-b"
 assert_local_write_result "$REQUEST_STATUS" "$REQUEST_LOCATION" "cluster-b" "$B_SIZE" "$B_HTTP_BASE" "$B_HTTP_STEP"
-MESSAGE_B="[3x2 smoke] local-write-b"
+MESSAGE_B="$(smoke_message "local-write-b")"
 
 submit_write "http://127.0.0.1:${A_HTTP_BASE}" "$WALLET_B" "foreign-write-b-on-a"
 assert_equals "$REQUEST_STATUS" "307" "cluster-a foreign write redirect"
@@ -428,5 +434,6 @@ wait_for_cluster_wallet_message "cluster-a" "$A_SIZE" "$A_HTTP_BASE" "$A_HTTP_ST
 
 echo ""
 echo "✅ 3x2 sharding smoke passed."
-echo "   Proven: health split, authoritative-store separation, local-vs-foreign write routing,"
-echo "   and bidirectional cross-cluster read visibility across all validator endpoints."
+echo "   Proven: every member sharded with one configDigest per cluster, all remote mounts available,"
+echo "   authoritative-store separation, local-vs-foreign write routing, and bidirectional"
+echo "   cross-cluster read visibility of this run's writes (nonce ${SMOKE_RUN_NONCE}) on every endpoint."

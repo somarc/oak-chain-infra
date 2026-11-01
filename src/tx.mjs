@@ -86,6 +86,15 @@ export function newProposalId() {
   return `0x${randomBytes(32).toString('hex')}`;
 }
 
+// Optional enterprise namespace (federated clusters): the address root a listed writer writes into.
+// Absent means the signer's own wallet. Sent as-is; the signature does not cover it.
+function namespaceField(namespace) {
+  if (namespace === undefined || namespace === null || namespace === '') return undefined;
+  const value = String(namespace).toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(value)) throw new Error(`namespace must be a 0x-prefixed 20-byte address: ${namespace}`);
+  return value;
+}
+
 function resolveKey({ key, keyIndex, prefix, seed }) {
   if (key) return { address: addressOf(key), privateKey: key };
   if (prefix !== undefined && prefix !== null && prefix !== '') return testKeyForPrefix(prefix, seed);
@@ -94,7 +103,7 @@ function resolveKey({ key, keyIndex, prefix, seed }) {
 
 // Form fields for POST /v1/propose-write. paymentTier is deliberately absent: the runtime
 // does not read it; the tier comes from the settlement proof.
-export function buildWrite({ contentType = 'page', ethereumTxHash, message, organization, proposalId = newProposalId(), ...keySpec } = {}) {
+export function buildWrite({ contentType = 'page', ethereumTxHash, message, namespace, organization, proposalId = newProposalId(), ...keySpec } = {}) {
   if (message === undefined || message === null) throw new Error('write needs a message (it is what gets signed)');
   const signer = resolveKey(keySpec);
   const fields = {
@@ -109,21 +118,26 @@ export function buildWrite({ contentType = 'page', ethereumTxHash, message, orga
     if (!/^[a-zA-Z0-9_-]{1,64}$/.test(organization)) throw new Error(`organization must match ^[a-zA-Z0-9_-]{1,64}$: ${organization}`);
     fields.organization = organization;
   }
+  const ns = namespaceField(namespace);
+  if (ns) fields.namespace = ns;
   return fields;
 }
 
 // Form fields for POST /v1/propose-delete. The signature binds contentPath (runtime fix
 // fix/delete-signature-binds-content-path; matches oak-chain-sdk signDeleteProposal).
-export function buildDelete({ contentPath, ethereumTxHash, proposalId = newProposalId(), ...keySpec } = {}) {
+export function buildDelete({ contentPath, ethereumTxHash, namespace, proposalId = newProposalId(), ...keySpec } = {}) {
   if (!contentPath) throw new Error('delete needs a contentPath (it is what gets signed)');
   const signer = resolveKey(keySpec);
-  return {
+  const fields = {
     contentPath,
     ethereumTxHash: ethereumTxHash ?? proposalId,
     proposalId,
     signature: personalSign(contentPath, signer.privateKey),
     walletAddress: signer.address,
   };
+  const ns = namespaceField(namespace);
+  if (ns) fields.namespace = ns;
+  return fields;
 }
 
 export function toForm(fields) {
