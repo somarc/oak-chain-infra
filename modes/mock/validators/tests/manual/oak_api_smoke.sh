@@ -26,7 +26,6 @@ PATHS=(
   "/api/segments/tars"
   "/v1/wallets/stats"
   "/v1/wallets/content?wallet=0x0000000000000000000000000000000000000000"
-  "/v1/gc/estimate"
 )
 
 echo "Oak Segment Consensus API smoke check"

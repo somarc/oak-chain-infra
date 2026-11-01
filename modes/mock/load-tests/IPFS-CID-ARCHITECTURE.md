@@ -320,13 +320,17 @@ curl https://cloudflare-ipfs.com/ipfs/QmXYZ...
 
 ---
 
-## Economics & GC Implications
+## GC Implications
 
-### Why CID Matters for GC (ADR 017)
+### Why CID Matters for GC
+
+GC is not paid. Deletes carry no GC cost or debt, and writes are never blocked
+on GC. Reclaiming Oak segments is left to Oak's own revision GC, which runs on
+each validator on its own schedule.
 
 When content is deleted:
 
-1. **Oak segments** marked for GC (tracked in GC debt)
+1. **Oak segments** become garbage that each validator's Oak revision GC reclaims
 2. **IPFS binaries** can be unpinned:
    ```bash
    ipfs pin rm QmXYZ...
@@ -335,16 +339,6 @@ When content is deleted:
    ```bash
    ipfs repo gc
    ```
-
-### Cost Model
-
-```
-Delete cost = Oak segment GC cost + IPFS storage cost
-
-Oak GC:     $0.10 per MB (validator overhead)
-IPFS unpin: Free (just metadata)
-IPFS GC:    Automatic (when unpinned)
-```
 
 **CID enables**:
 - Validators verify binary exists before accepting delete

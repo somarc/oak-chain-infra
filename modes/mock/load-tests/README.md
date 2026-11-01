@@ -28,9 +28,9 @@ Every write and delete these scripts send is valid under the runtime's contract 
 | `06-ultra-ultra-multi-node.sh` | 30 min (default) | 36 (default) | 2000–20000 | 40% | Multi-node ingress fanout draft |
 | `07-rejoin-drain-draft.sh` | 15 min (default) | via `06` | inherited | Follower kill/rejoin backlog drain draft |
 | `08-proposal-persistence-sweep.sh` | 10 min/case (default) | 12 | 2000–6000 | 30% | Matrix sweep of persistence enabled + flush tuning |
-| `10-e2e-write-delete-gc.sh` | depends on load profile | inherited | inherited | inherited | Fresh cluster -> load -> drain -> delete replay -> drain -> GC -> drain |
-| `10-e2e-write-delete-gc-light.sh` | ~5–30 min | inherited (light profile default) | inherited | inherited | Lightweight e2e lifecycle sanity run with bounded deletes |
-| `11-e2e-write-namespace-delete-gc.sh` | ~10–30 min | 1 (default) | 100 (default) | 5% | Fresh cluster -> write under one namespace -> single namespace delete proposal -> drain -> GC |
+| `10-e2e-write-delete.sh` | depends on load profile | inherited | inherited | inherited | Fresh cluster -> load -> drain -> delete replay -> drain |
+| `10-e2e-write-delete-light.sh` | ~5–30 min | inherited (light profile default) | inherited | inherited | Lightweight e2e lifecycle sanity run with bounded deletes |
+| `11-e2e-write-namespace-delete.sh` | ~10–30 min | 1 (default) | 100 (default) | 5% | Fresh cluster -> write under one namespace -> single namespace delete proposal -> drain |
 | `12-unreachable-pause-rejoin-draft.sh` | 15 min (default) | via `06` | inherited | inherited | Pause one follower process (SIGSTOP) during active load, then resume (SIGCONT) and evaluate catch-up |
 
 Binary mix defaults:
@@ -332,16 +332,20 @@ Target a specific capture set:
 
 ## End-to-End Lifecycle Run
 
-Single command for: fresh cluster, load, validate drain, delete replay, validate drain, GC, validate drain.
+Single command for: fresh cluster, load, validate drain, delete replay, validate drain.
+
+There is no GC step. GC is not paid and is not triggered over HTTP: it is left to
+Oak's own revision GC, which runs on each validator on its own schedule. The former
+`/v1/propose-gc`, `/v1/gc/*` and `/v1/compaction/proposals` routes no longer exist.
 
 ```bash
-./load-tests/10-e2e-write-delete-gc.sh
+./load-tests/10-e2e-write-delete.sh
 ```
 
 Lighter variant (recommended for quick validation):
 
 ```bash
-./load-tests/10-e2e-write-delete-gc-light.sh
+./load-tests/10-e2e-write-delete-light.sh
 ```
 
 Light defaults:
@@ -355,22 +359,10 @@ Light defaults:
 Useful overrides:
 
 ```bash
-LOAD_SCRIPT=./load-tests/04-soak-2h.sh ./load-tests/10-e2e-write-delete-gc.sh
-SKIP_CLUSTER_RESTART=true ./load-tests/10-e2e-write-delete-gc.sh
-DELETE_MAX=10000 DELETE_SLEEP_MS=30 ./load-tests/10-e2e-write-delete-gc.sh
-LOAD_SCRIPT=./load-tests/02-medium-15min.sh DELETE_MAX=2000 ./load-tests/10-e2e-write-delete-gc-light.sh
-```
-
-GC consensus/vote knobs:
-
-```bash
-# Auto-submit approval votes before execute (default true)
-GC_AUTO_VOTE=true
-# Validator IDs to cast votes as ("auto" discovers memberId list from /v1/aeron/cluster-state)
-GC_VOTER_IDS=auto
-# Approval wait tuning
-GC_APPROVAL_TIMEOUT_SECONDS=300
-GC_APPROVAL_POLL_SECONDS=5
+LOAD_SCRIPT=./load-tests/04-soak-2h.sh ./load-tests/10-e2e-write-delete.sh
+SKIP_CLUSTER_RESTART=true ./load-tests/10-e2e-write-delete.sh
+DELETE_MAX=10000 DELETE_SLEEP_MS=30 ./load-tests/10-e2e-write-delete.sh
+LOAD_SCRIPT=./load-tests/02-medium-15min.sh DELETE_MAX=2000 ./load-tests/10-e2e-write-delete-light.sh
 ```
 
 ## Namespace Delete E2E
@@ -378,10 +370,10 @@ GC_APPROVAL_POLL_SECONDS=5
 Single-command lifecycle for large-tree delete behavior:
 - write many nodes in one namespace (`client-1` by default)
 - submit a single delete proposal for the parent namespace path
-- validate drain, then run GC flow
+- validate drain (no GC step; see above)
 
 ```bash
-./load-tests/11-e2e-write-namespace-delete-gc.sh
+./load-tests/11-e2e-write-namespace-delete.sh
 ```
 
 Useful overrides:
@@ -389,14 +381,14 @@ Useful overrides:
 ```bash
 # Increase writes in the single namespace
 MIN_WRITES_PER_CLIENT=500 MAX_WRITES_PER_CLIENT=500 LOAD_SCRIPT=./load-tests/11-namespace-delete-5min.sh \
-  ./load-tests/11-e2e-write-namespace-delete-gc.sh
+  ./load-tests/11-e2e-write-namespace-delete.sh
 
 # Explicitly set namespace delete target path
 NAMESPACE_DELETE_PATH=/oak-chain/74/2d/35/0x742d.../Client1/content \
-  ./load-tests/11-e2e-write-namespace-delete-gc.sh
+  ./load-tests/11-e2e-write-namespace-delete.sh
 
 # Skip cluster restart if already running
-SKIP_CLUSTER_RESTART=true ./load-tests/11-e2e-write-namespace-delete-gc.sh
+SKIP_CLUSTER_RESTART=true ./load-tests/11-e2e-write-namespace-delete.sh
 ```
 
 ## Legacy Scripts

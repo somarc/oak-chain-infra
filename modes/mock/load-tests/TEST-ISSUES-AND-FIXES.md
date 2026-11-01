@@ -241,7 +241,6 @@ cd /Users/mhess/aem/aem-code/OAK/blockchain-aem-infra/scripts/local-development/
 - ✅ 10 deletes (20% ratio)
 - ✅ No `head: illegal line count` errors
 - ✅ No 403 path ownership errors
-- ✅ GC debt tracked correctly
 
 **IPFS CID Investigation** (post-test):
 ```bash
