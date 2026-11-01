@@ -597,9 +597,10 @@ export async function runFederationSmoke(config, {
       const views = c1.views.filter(({ member }) => member.cluster === cluster);
       const expectedNs = cluster === A ? [addr.nsA1, addr.nsA2] : [addr.nsB1];
       assert(`federated-${cluster.label}`, {
-        evidence: p2, expected: `federated=true localStatus=ACTIVE localNamespaces=${expectedNs.map(short).join(',')}`,
-        observed: views.map(({ view }) => `${view.status?.federated}/${view.status?.localStatus}/${(view.status?.localNamespaces ?? []).map(short).join(',')}`),
-        ok: views.every(({ view }) => view.status?.federated === true && view.status?.localStatus === 'ACTIVE' && sameList(view.status?.localNamespaces, expectedNs)),
+        // status.localNamespaces is the count of namespaces the local enterprise owns; directory-content checks which
+        evidence: p2, expected: `federated=true localStatus=ACTIVE localNamespaces=${expectedNs.length}`,
+        observed: views.map(({ view }) => `${view.status?.federated}/${view.status?.localStatus}/${view.status?.localNamespaces}`),
+        ok: views.every(({ view }) => view.status?.federated === true && view.status?.localStatus === 'ACTIVE' && view.status?.localNamespaces === expectedNs.length),
       });
     }
     assert('no-source-error', { evidence: p2, expected: 'no member reports a sourceError', kind: 'diagnostic', observed: c1.views.map(({ view }) => view.status?.sourceError ?? null), ok: c1.views.every(({ view }) => !view.status?.sourceError) });

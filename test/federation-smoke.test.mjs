@@ -80,7 +80,7 @@ async function startFederation({ directoryFile, faults = {} }) {
       charterDigest: cluster.charterDigest, charterMatchesConfig: true, checkedAtMs: Date.now(), clusterId: cluster.clusterId,
       configuredEnterpriseId: cluster.enterpriseId, directoryDigest: cluster.directoryDigest || null,
       directoryEpoch: cluster.directory?.directoryEpoch ?? null, enterprises: cluster.directory?.entries.length ?? 0,
-      federated: Boolean(cluster.directory), lastAction: 'committed', localNamespaces: local?.namespaces ?? [],
+      federated: Boolean(cluster.directory), lastAction: 'committed', localNamespaces: local ? local.namespaces.length : null,
       localStatus: local?.status ?? null, sourceError: null,
     };
   };
