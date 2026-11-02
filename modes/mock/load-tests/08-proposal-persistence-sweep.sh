@@ -39,13 +39,13 @@ echo "- Target writes/case: ${TARGET_WRITES}"
 echo "- Summary: $SUMMARY_TSV"
 echo "- Details: $DETAIL_LOG"
 
+# The profile lives in /tmp, so it sources run-load-test.sh by the absolute path expanded here.
 make_load_profile() {
   local case_name="$1"
   local out="$2"
   cat > "$out" <<EOF
 #!/bin/bash
 set -e
-SCRIPT_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
 TEST_NAME="persistence-sweep-${case_name}"
 TEST_DURATION_SECONDS=${TARGET_DURATION_SECONDS}
 NUM_CLIENTS=12
@@ -56,16 +56,18 @@ VALIDATOR_BINARY_PERCENT=10
 SLEEP_MIN_MS=8
 SLEEP_MAX_MS=60
 REGISTER_CLIENTS=true
-source "\$SCRIPT_DIR/run-load-test.sh"
+source $(printf '%q' "$SCRIPT_DIR/run-load-test.sh")
 EOF
   chmod +x "$out"
 }
 
+FAILED_CASES=()
 for c in "${CASES[@]}"; do
   IFS=':' read -r case_name persist_enabled flush_ms flush_batch <<< "$c"
   echo "===== CASE $case_name =====" | tee -a "$DETAIL_LOG"
   echo "persistence_enabled=$persist_enabled flush_ms=$flush_ms flush_batch=$flush_batch" | tee -a "$DETAIL_LOG"
 
+  set +e
   (
     cd "$LIFECYCLE_DIR"
     OAK_PROPOSAL_PERSISTENCE_ENABLED="$persist_enabled" \
@@ -73,6 +75,14 @@ for c in "${CASES[@]}"; do
     OAK_PROPOSAL_PERSISTENCE_FLUSH_BATCH="$flush_batch" \
       ./start-cluster.sh --fresh --wait-seconds 60
   ) | tee -a "$DETAIL_LOG"
+  start_rc=${PIPESTATUS[0]}
+  set -e
+  if [ "$start_rc" -ne 0 ]; then
+    echo "❌ CASE $case_name: start-cluster.sh exited $start_rc; no benchmark run" | tee -a "$DETAIL_LOG"
+    echo -e "${case_name}\t${persist_enabled}\t${flush_ms}\t${flush_batch}\t\tstart:${start_rc}" >> "$SUMMARY_TSV"
+    FAILED_CASES+=("$case_name")
+    continue
+  fi
 
   tmp_profile="/tmp/persistence-sweep-${case_name}-${TS}.sh"
   make_load_profile "$case_name" "$tmp_profile"
@@ -89,6 +99,10 @@ for c in "${CASES[@]}"; do
 
   report_json="$(echo "$benchmark_output" | awk -F': ' '/Benchmark report JSON:/{print $2}' | tail -n 1)"
   echo -e "${case_name}\t${persist_enabled}\t${flush_ms}\t${flush_batch}\t${report_json}\t${rc}" >> "$SUMMARY_TSV"
+  if [ "$rc" -ne 0 ]; then
+    echo "❌ CASE $case_name: run-benchmark.sh exited $rc" | tee -a "$DETAIL_LOG"
+    FAILED_CASES+=("$case_name")
+  fi
 
   if [ "$SLEEP_BETWEEN_CASES_SECONDS" -gt 0 ]; then
     sleep "$SLEEP_BETWEEN_CASES_SECONDS"
@@ -96,6 +110,11 @@ for c in "${CASES[@]}"; do
 done
 
 echo
-echo "✅ Persistence sweep complete"
+if [ "${#FAILED_CASES[@]}" -gt 0 ]; then
+  echo "❌ Persistence sweep: ${#FAILED_CASES[@]} of ${#CASES[@]} cases failed: ${FAILED_CASES[*]}"
+else
+  echo "✅ Persistence sweep complete"
+fi
 echo "- Summary TSV: $SUMMARY_TSV"
 echo "- Details log: $DETAIL_LOG"
+[ "${#FAILED_CASES[@]}" -eq 0 ]
