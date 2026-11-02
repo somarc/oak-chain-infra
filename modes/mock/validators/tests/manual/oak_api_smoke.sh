@@ -17,13 +17,12 @@ PATHS=(
   "/v1/aeron/replication-lag"
   "/v1/events/recent"
   "/v1/events/stats"
-  "/api/metrics"
+  "/v1/ops/snapshots/runtime"
   "/metrics"
   "/manifest"
   "/journal.log"
   "/api/explore?path=/"
-  "/api/segments/recent"
-  "/api/segments/tars"
+  "/v1/ops/snapshots/storage"
   "/v1/wallets/stats"
   "/v1/wallets/content?wallet=0x0000000000000000000000000000000000000000"
 )
@@ -44,8 +43,6 @@ done
 POSTS=(
   "/v1/propose-write"
   "/v1/propose-delete"
-  "/v1/binary/declare-intent"
-  "/v1/binary/complete-upload"
   "/v1/register-client"
 )
 
