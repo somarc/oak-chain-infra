@@ -7,13 +7,14 @@ CONFIG_DIR="$SCRIPT_DIR/../config"
 BASE_CONFIGS=("$CONFIG_DIR/mock.env" "$CONFIG_DIR/ipfs.env")
 CLUSTER_A_CONFIG="${CLUSTER_A_CONFIG:-$CONFIG_DIR/3x3-cluster-a.env}"
 CLUSTER_B_CONFIG="${CLUSTER_B_CONFIG:-$CONFIG_DIR/3x3-cluster-b.env}"
-CLUSTER_C_CONFIG="${CLUSTER_C_CONFIG:-$CONFIG_DIR/3x3-cluster-c.env}"
+# start/stop/status-3x2.sh run these scripts with CLUSTER_C_CONFIG set but empty: no cluster C.
+CLUSTER_C_CONFIG="${CLUSTER_C_CONFIG-$CONFIG_DIR/3x3-cluster-c.env}"
 
 usage() {
   cat <<EOF
 Usage: $(basename "$0") [--cluster-a-config path] [--cluster-b-config path] [--cluster-c-config path]
 
-Shows scoped validator/IPFS/OPS status for all three local 3x3 clusters.
+Shows scoped validator/IPFS/OPS status for every local 3x3 (or 3x2) cluster.
 EOF
 }
 
@@ -77,5 +78,7 @@ done
 status_named_cluster "cluster-a" "$CLUSTER_A_CONFIG"
 echo ""
 status_named_cluster "cluster-b" "$CLUSTER_B_CONFIG"
-echo ""
-status_named_cluster "cluster-c" "$CLUSTER_C_CONFIG"
+if [ -n "$CLUSTER_C_CONFIG" ]; then
+  echo ""
+  status_named_cluster "cluster-c" "$CLUSTER_C_CONFIG"
+fi

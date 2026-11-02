@@ -7,14 +7,16 @@ CONFIG_DIR="$SCRIPT_DIR/../config"
 BASE_CONFIGS=("$CONFIG_DIR/mock.env" "$CONFIG_DIR/ipfs.env")
 CLUSTER_A_CONFIG="${CLUSTER_A_CONFIG:-$CONFIG_DIR/3x3-cluster-a.env}"
 CLUSTER_B_CONFIG="${CLUSTER_B_CONFIG:-$CONFIG_DIR/3x3-cluster-b.env}"
-CLUSTER_C_CONFIG="${CLUSTER_C_CONFIG:-$CONFIG_DIR/3x3-cluster-c.env}"
+# start/stop/status-3x2.sh run these scripts with CLUSTER_C_CONFIG set but empty: no cluster C.
+CLUSTER_C_CONFIG="${CLUSTER_C_CONFIG-$CONFIG_DIR/3x3-cluster-c.env}"
 FORWARD_ARGS=()
 
 usage() {
   cat <<EOF
 Usage: $(basename "$0") [stop-cluster args...] [--cluster-a-config path] [--cluster-b-config path] [--cluster-c-config path]
 
-Stops clusters C, B, and A using the scoped runtime roots from the 3x3 config packs.
+Stops clusters C, B, and A (B then A for 3x2) using the scoped runtime roots from the
+3x3 (or 3x2) config packs.
 EOF
 }
 
@@ -77,6 +79,6 @@ while (($# > 0)); do
   shift
 done
 
-stop_named_cluster "cluster-c" "$CLUSTER_C_CONFIG"
+[ -z "$CLUSTER_C_CONFIG" ] || stop_named_cluster "cluster-c" "$CLUSTER_C_CONFIG"
 stop_named_cluster "cluster-b" "$CLUSTER_B_CONFIG"
 stop_named_cluster "cluster-a" "$CLUSTER_A_CONFIG"

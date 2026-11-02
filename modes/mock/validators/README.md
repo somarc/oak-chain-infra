@@ -37,6 +37,7 @@ Validator-only local operations for Oak Chain mock mode.
 - `lifecycle/start-3x2.sh`
   - Starts two separate 3-node clusters for local sharding proof.
   - Reuses `start-cluster.sh` twice with scoped runtime roots, non-overlapping ports, and inverse shard ownership.
+  - `start/stop/status-3x2.sh` run the `-3x3.sh` scripts with the 3x2 config packs and an empty `CLUSTER_C_CONFIG`, which skips cluster C.
   - Disables watchdog/load-observer by default for the dual-cluster topology.
   - Reads shared cluster defaults from `config/3x2-common.env` and per-cluster overrides from `config/3x2-cluster-a.env` / `config/3x2-cluster-b.env`.
 - `lifecycle/stop-3x2.sh`
