@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { keccak_256 as keccak256 } from '@noble/hashes/sha3.js';
 import * as secp from '@noble/secp256k1';
 
 import {
@@ -71,7 +71,7 @@ test('the optional federation namespace is sent lower-cased, validated, and neve
 
 function prefixedSign(message, privateKeyHex, length) {
   const bytes = new TextEncoder().encode(message);
-  const digest = keccak256(new Uint8Array([...new TextEncoder().encode(`\u0019Ethereum Signed Message:\n${length}`), ...bytes]));
+  const digest = createHash('keccak-256').update(new Uint8Array([...new TextEncoder().encode(`\u0019Ethereum Signed Message:\n${length}`), ...bytes])).digest();
   const recovered = secp.sign(digest, Uint8Array.from(Buffer.from(privateKeyHex.slice(2), 'hex')), { format: 'recovered', prehash: false });
   return `0x${Buffer.from([...recovered.slice(1), 27 + recovered[0]]).toString('hex')}`;
 }
