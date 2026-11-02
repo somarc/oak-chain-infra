@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_DIR="${LOG_DIR:-$HOME/oak-chain/logs}"
 HOST="${HOST:-http://127.0.0.1}"
 NODES="${NODES:-8090,8092,8094}"
-LOAD_SCRIPT="${LOAD_SCRIPT:-$SCRIPT_DIR/03-heavy-30min-priority.sh}"
+LOAD_SCRIPT="${LOAD_SCRIPT:-$SCRIPT_DIR/03-heavy-30min.sh}"
 SAMPLE_INTERVAL_SECONDS="${SAMPLE_INTERVAL_SECONDS:-5}"
 SAMPLER_BUFFER_SECONDS="${SAMPLER_BUFFER_SECONDS:-30}"
 TARGET_WRITES="${TARGET_WRITES:-100000}"
@@ -29,7 +29,7 @@ usage() {
 Usage: $(basename "$0") [options]
 
 Options:
-  --load-script <path>         Load script to run (default: 03-heavy-30min-priority.sh)
+  --load-script <path>         Load script to run (default: 03-heavy-30min.sh)
   --host <url>                 Validator host base (default: http://127.0.0.1)
   --nodes <ports>              Comma-separated node ports (default: 8090,8092,8094)
   --sample-interval <seconds>  Queue sampler interval (default: 5)

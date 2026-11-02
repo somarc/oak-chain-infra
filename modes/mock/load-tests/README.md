@@ -12,7 +12,7 @@ Every write and delete these scripts send is valid under the runtime's contract 
 - `ethereumTxHash` is the mock settlement hash, which equals `proposalId`.
 - Wallets are test keys we hold: client N is `oak-chain tx key --index N` (`WALLETS` in `suite-lib.sh`, listed in [`../lib/test-wallets.tsv`](../lib/test-wallets.tsv)).
 - Each client pre-signs its whole batch in one `oak-chain tx write --count N` call. Form writes send that body as-is; validator-hosted binaries send the same fields as multipart `--form-string` parts plus the file.
-- **`paymentTier` is gone.** The runtime does not read it; the tier comes from the settlement proof. The `TIER_*_WEIGHT` knobs and `select_payment_tier` were removed, and `03-heavy-30min-priority.sh` no longer differs from the heavy profile in tier.
+- **`paymentTier` is gone.** The runtime does not read it; the tier comes from the settlement proof. The `TIER_*_WEIGHT` knobs and `select_payment_tier` were removed, and `03-heavy-30min-priority.sh` was deleted because it no longer differed from `03-heavy-30min.sh` (`run-benchmark.sh` now defaults to the heavy profile; set `TEST_NAME=heavy-30min-priority` to keep the old report label).
 - Client registration (`/v1/register-client`) is unsigned because the runtime does not read a signature there. The clientId is `client-<N>-<wallet bytes>`, so a cluster that persisted `client-<N>` for an older wallet does not answer 409.
 
 ## Ladder (Progressive Intensity)
@@ -112,7 +112,6 @@ Each line holds `wallet`, `organization`, `proposalId`, `ethereumTxHash`, `signa
 
 ## Monitoring
 
-- `monitor-metrics.sh` — polls consensus/lag/pending and writes CSV log
 - `monitor-validator-logs.sh` — tails validator logs with filtering and timestamps
 - `queue-sampler.py` — samples mempool/queue stats from all validators into CSV
 - `analyze-queue-samples.py` — computes ingest/verify/processed rates from sampler CSV
