@@ -154,6 +154,81 @@ still routes to the same shard; roles therefore use distinct first bytes.
     left stopped is named with its restart command in `report.md`. Evidence:
     `$FED_3X2_ROOT/evidence/failover-<UTC>/` (smoke format plus
     `failover.json`, `member-stop.log`, `member-start.log`).
+- `routing/federation-3x2-gc.sh`
+  - Member-local segment GC and binary GC on federation cluster B, observed
+    through cluster A's directory mount. Needs a jar from `jackrabbit-oak`
+    `feature/consensus-gc-safety` (it serves `GET /v1/gc/status`). Logic:
+    `src/federation-gc.mjs` on `src/federation-session.mjs`; tests:
+    `test/federation-gc.test.mjs` (pure judgements plus end-to-end runs
+    against `fixtures/fake-gc-federation.mjs`).
+  - Launch: cluster B with the GC test profile, cluster A on the defaults,
+    then the smoke (it commits the directory in which B owns nsB1):
+    `FED_3X2_B_GC_JAVA_OPTS=test OAK_CONSENSUS_JAR=… ../lifecycle/start-fed-3x2.sh --fresh`.
+    The profile (`FED_3X2_GC_TEST_JAVA_OPTS`, `lifecycle/lib/fed-3x2.sh`):
+    `oak.gc.tail.interval.ms=60000`, `oak.gc.full.interval.ms=120000`,
+    `oak.gc.backoff=0`, `oak.gc.estimation.size.delta.bytes=0`,
+    `oak.gc.binary.interval.ms=60000`, `oak.gc.binary.grace.ms=60000`,
+    `oak.gc.binary.delete.delay.ms=30000`. It is in B's launch record; a
+    `member.sh` restart of a B member under `config/fed-3x2-cluster-b.env`
+    needs the same `FED_3X2_B_GC_JAVA_OPTS` (the environment's
+    `EXTRA_JAVA_OPTS` wins over the record's). The scenario itself never
+    starts, stops or signals anything.
+  - G0 preflight: six members up, one jar; B's launch record carries the
+    profile and A's no `-Doak.gc.*`; `/v1/gc/status` on all six (B reports the
+    profile, A the defaults); B owns nsB1; every A mount of B verified and
+    available; B's binary delete counters as the baseline. G1: 2 control
+    messages, 16 bulk messages of 180000 characters (~2.9 MB) and 4
+    validator-hosted binaries of 20 KiB (multipart upload) into nsB1, all
+    committed and present on every B member, the binaries in the replicated
+    index (`/:oak-chain-binaries/aa/bb/<sha-256>`) on every B member, all read
+    on A through the mount. G2: a continuous reader starts on A (control
+    items, two bulk items, the deleted binaries and the nsB1 listing, every
+    `FED_GC_READER_MS`); every bulk message and 3 of the 4 binaries are
+    deleted (absent on every B member and through every A mount). G3, within
+    `FED_GC_SECONDS` (600) of the last delete: each B member reports two
+    completed full runs started after the deletes, with reclaimed bytes and a
+    smaller store (latest `sizeAfter` < first `sizeBefore`); binary GC
+    released the deleted binaries on every B member (`lastRelease`, index
+    entries 404, `deletes.ok + absent` grown by 3 with nothing pending). G4:
+    the reader is judged and both clusters checked for logical convergence.
+  - Required assertions: `members-up`, `same-jar`,
+    `b-launched-with-gc-profile`, `a-launched-with-gc-defaults`,
+    `gc-status-present`, `b-gc-settings-applied`, `a-gc-settings-default`,
+    `directory-uniform`, `nsB1-owned-by-B`, `a-mounts-b-ready`,
+    `writes-accepted`, `writes-committed`, `writes-on-every-b-member`,
+    `binaries-stored`, `binaries-indexed`, `a-reads-before-delete`,
+    `deletes-accepted`, `deletes-committed`, `deletes-absent-on-b`,
+    `deletes-absent-through-a`, `segment-gc-b0..b2`, `binary-gc-released`,
+    `binary-index-entries-released`, `binary-records-deleted`,
+    `a-control-never-missing` (every A read of control content is the content
+    or a `503 mount_stale`/`mount_unavailable`: never missing, never a 500),
+    `a-mount-503-bounded` (at most `FED_GC_MAX_503_FRACTION` 0.1 of control
+    reads, no 503 streak over `FED_GC_MAX_503_STREAK_SECONDS` 30 per A
+    member), `a-doomed-present-until-deleted`, `b-converged-control`,
+    `b-converged-deleted`, `b-listing-converged`, `a-converged-control`,
+    `a-converged-deleted`, `a-listing-converged`, `a-own-content-converged`,
+    `control-binary-kept` (index entry and bytes on every B member),
+    `members-up-end`, `no-restarts`, `no-unexpected-5xx`. Diagnostics: GC
+    run timings and sizes per member, stagger (lag behind each member's slot,
+    overlapping runs), failed/cancelled runs, release counts, delete
+    failures, deleted bytes still served, A's GC idle, the log scan.
+  - Duration: about 8 to 10 minutes (G0-G2 about 2, G3 typically 4 to 7, at
+    most `FED_GC_SECONDS`); 41 operations (charter budget 50).
+  - Proves: on B, Oak's own tail/full GC runs per member on the configured
+    slots, reclaims the space of deleted content and shrinks the store;
+    binary GC releases only unreferenced binaries through a replicated
+    release and every member's local delete covers them; through all of it a
+    remote reader on A never sees control content vanish or a 500, only
+    bounded `503 mount_*`; both clusters stay logically converged. Does not
+    prove: GC at production intervals or under write load (charter 4.1: no
+    GC concurrent with write pressure), cluster A's GC, GC across a member
+    restart or leader change, Kubo block reclamation (Kubo's own GC), or
+    behaviour with separate IPFS nodes per member (all local clusters share
+    one Kubo, so a member that did not delete a record counts it `absent`).
+  - Evidence: `$FED_3X2_ROOT/evidence/gc-<UTC>/` in the smoke's format plus
+    `gc.json` (items with paths, blob ids, CIDs and sha256s; the timeline;
+    every reader read; every GC run seen per member; binary GC state). Bulk
+    payloads are recorded as length + sha256. Exit 0 PASS, 1 FAIL, 2 refused.
 - `stability/aeron-warm-failover-smoke.sh`
   - Repeated failover loop for confidence in recovery over multiple cycles.
 - `stability/aeron-quorum-envelope-smoke.sh`
@@ -188,6 +263,8 @@ still routes to the same shard; roles therefore use distinct first bytes.
 OAK_CONSENSUS_JAR=/abs/path/oak-segment-consensus.jar ./routing/federation-3x2-smoke.sh
 # One bounded fault on the same clusters, after the smoke
 OAK_CONSENSUS_JAR=/abs/path/oak-segment-consensus.jar ./routing/federation-3x2-failover.sh
+# GC on cluster B (launched with FED_3X2_B_GC_JAVA_OPTS=test), after the smoke
+OAK_CONSENSUS_JAR=/abs/path/oak-segment-consensus.jar ./routing/federation-3x2-gc.sh
 
 # Single-cluster acceptance gate
 bash ./surfaces/proposal-surfaces-single-cluster.sh

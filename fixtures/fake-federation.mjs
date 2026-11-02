@@ -18,7 +18,7 @@ const digestOf = (value) => `0x${createHash('sha256').update(JSON.stringify(valu
 
 // Fixed-range ports, not ephemeral ones: other test files (run in parallel) take an ephemeral port
 // and assume the next few above it are free.
-async function listen(handler) {
+export async function listen(handler) {
   for (let attempt = 0; attempt < 50; attempt += 1) {
     const port = 20_000 + Math.floor(Math.random() * 10_000);
     const server = http.createServer(handler);
@@ -240,13 +240,15 @@ const pidBase = (label) => (label === 'a' ? 40000 : 41000);
 
 // A temporary federation root with launch records, pid files and logs for the fake members, a `ps`
 // stub, and a fake member control that stops/starts a fake member like lifecycle/member.sh would.
-export async function setupFederation(t, faults, { directory } = {}) {
+// `start` replaces the fake federation (same { clusters, close } shape); `launchOpts[label]` is
+// appended to that cluster's recorded EXTRA_JAVA_OPTS.
+export async function setupFederation(t, faults, { directory, launchOpts = {}, start = startFederation } = {}) {
   const home = await mkdtemp(path.join(os.tmpdir(), 'oak-fed-test-'));
   const fedRoot = path.join(home, 'oak-chain-federation', '3x2');
   const directoryFile = path.join(fedRoot, 'directory.json');
   await mkdir(fedRoot, { recursive: true });
   if (directory) await writeFile(directoryFile, `${JSON.stringify(directory)}\n`);
-  const federation = await startFederation({ directoryFile, faults });
+  const federation = await start({ directoryFile, faults });
   const jar = path.join(home, 'oak-segment-consensus.jar');
   await writeFile(jar, 'fixture jar');
   const jarSha = createHash('sha256').update('fixture jar').digest('hex');
@@ -258,7 +260,7 @@ export async function setupFederation(t, faults, { directory } = {}) {
     const logDir = path.join(runtimeRoot, 'logs');
     await mkdir(pidDir, { recursive: true });
     await mkdir(logDir, { recursive: true });
-    const opts = `-Doak.federation.enterpriseId=${cluster.enterpriseId} -Doak.federation.mode=mock -Doak.federation.registry=static -Doak.federation.directoryFile=${directoryFile} -Doak.federation.pollMs=2000`;
+    const opts = `-Doak.federation.enterpriseId=${cluster.enterpriseId} -Doak.federation.mode=mock -Doak.federation.registry=static -Doak.federation.directoryFile=${directoryFile} -Doak.federation.pollMs=2000${launchOpts[cluster.label] ? ` ${launchOpts[cluster.label]}` : ''}`;
     await writeFile(path.join(pidDir, 'cluster-launch.env'), `# test\nOAK_CLUSTER_SIZE=3\nEXTRA_JAVA_OPTS=${opts}\nOAK_CONSENSUS_JAR=${jar}\nOAK_CONSENSUS_JAR_SHA256=${jarSha}\n`);
     for (let i = 0; i < 3; i += 1) {
       const pid = pidBase(cluster.label) + i;

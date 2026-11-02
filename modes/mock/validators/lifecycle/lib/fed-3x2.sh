@@ -156,3 +156,28 @@ fed_3x2_require_jar() {
   fi
   return 0
 }
+
+# GC overrides for federation cluster B (tests/routing/federation-3x2-gc.sh). config/fed-3x2-cluster-b.env
+# appends fed_3x2_gc_java_opts "$FED_3X2_B_GC_JAVA_OPTS" to cluster B's EXTRA_JAVA_OPTS, so start-cluster.sh
+# records them in the launch record; cluster A always keeps the runtime defaults. The test profile runs
+# tail GC every minute, full GC every two, with Oak's backoff and size-delta guards off, and binary GC
+# marking every minute with a one-minute grace and a 30 s delete delay.
+FED_3X2_GC_TEST_JAVA_OPTS="-Doak.gc.tail.interval.ms=60000 -Doak.gc.full.interval.ms=120000 -Doak.gc.backoff=0 -Doak.gc.estimation.size.delta.bytes=0 -Doak.gc.binary.interval.ms=60000 -Doak.gc.binary.grace.ms=60000 -Doak.gc.binary.delete.delay.ms=30000"
+
+# fed_3x2_gc_java_opts VALUE: print the JVM options VALUE stands for: nothing for "", the test profile
+# for "test", otherwise VALUE itself. Every option must be -Doak.gc.<name>=<value> (no quotes, spaces
+# or shell characters: run-validator-node.sh word-splits EXTRA_JAVA_OPTS); anything else is refused.
+fed_3x2_gc_java_opts() {
+  local value="$1" token out="" pattern='^-Doak\.gc\.[A-Za-z][A-Za-z.]*=[A-Za-z0-9._-]+$'
+  local -a tokens=()
+  if [ "$value" = "test" ]; then value="$FED_3X2_GC_TEST_JAVA_OPTS"; fi
+  read -r -a tokens <<<"$value" || true
+  for token in ${tokens[@]+"${tokens[@]}"}; do
+    if ! [[ "$token" =~ $pattern ]]; then
+      echo "❌ Refusing federation 3x2: GC option '$token' is not -Doak.gc.<name>=<value> (FED_3X2_B_GC_JAVA_OPTS)" >&2
+      return 1
+    fi
+    out="${out:+$out }$token"
+  done
+  printf '%s' "$out"
+}

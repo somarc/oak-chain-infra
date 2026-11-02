@@ -1,5 +1,5 @@
 // Shared evidence session for the enterprise-federation 3x2 live scenarios (federation-smoke.mjs,
-// federation-failover.mjs). One session owns one immutable evidence directory under
+// federation-failover.mjs, federation-gc.mjs). One session owns one immutable evidence directory under
 // $FED_3X2_ROOT/evidence/ and records every request it makes:
 //
 //     manifest.json        provenance: git SHAs and dirty state, jar path + sha256, java -version,
@@ -179,6 +179,17 @@ export function sealEvidence(dir) {
   chmodSync(dir, 0o555);
 }
 
+// requests.ndjson keeps every request, but not megabytes of test payload: strings longer than
+// `max` characters are recorded as their length and sha256 (the scenario keeps the full values).
+export function compactValue(value, max = 1024) {
+  if (typeof value === 'string') {
+    return value.length > max ? `<${value.length} chars sha256:${createHash('sha256').update(value).digest('hex')}>` : value;
+  }
+  if (Array.isArray(value)) return value.map((item) => compactValue(item, max));
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, compactValue(item, max)]));
+  return value;
+}
+
 export function cell(value) {
   if (value === undefined || value === null) return '';
   const text = typeof value === 'string' ? value : JSON.stringify(value);
@@ -241,9 +252,12 @@ export function createFederationSession(config, {
   };
   s.log = log;
 
-  // Every request goes through here: recorded verbatim, then classified. `tolerate` records without
-  // aborting (for members that are expected to be down or still starting).
-  s.call = async (callLabel, method, url, { allow5xx = () => false, form = null, tolerate = false } = {}) => {
+  // Every request goes through here: recorded (strings over 1 KiB as length + sha256, see
+  // compactValue), then classified. `tolerate` records without aborting (for members that are
+  // expected to be down or still starting). `files` ([{ field, name, type, bytes }]) sends the form
+  // as multipart/form-data with those file parts; `binary` reads a 200 response as bytes
+  // (result.bytes; recorded as length + sha256).
+  s.call = async (callLabel, method, url, { allow5xx = () => false, binary = false, files = null, form = null, tolerate = false } = {}) => {
     seq += 1;
     stats.requests += 1;
     const id = seq;
@@ -252,18 +266,30 @@ export function createFederationSession(config, {
     const headers = {};
     let status = 0;
     let text = '';
+    let bytes = null;
     let error = null;
+    let body;
+    let requestHeaders = { Accept: 'application/json' };
+    if (files) {
+      body = new FormData();
+      for (const [key, value] of Object.entries(form ?? {})) body.append(key, value);
+      for (const file of files) body.append(file.field ?? 'file', new Blob([file.bytes], { type: file.type ?? 'application/octet-stream' }), file.name);
+    } else if (form) {
+      body = new URLSearchParams(form).toString();
+      requestHeaders = { ...requestHeaders, 'Content-Type': 'application/x-www-form-urlencoded' };
+    }
     try {
       const response = await fetchImpl(url, {
-        body: form ? new URLSearchParams(form).toString() : undefined,
-        headers: form ? { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' } : { Accept: 'application/json' },
+        body,
+        headers: requestHeaders,
         method,
         redirect: 'manual',
         signal: AbortSignal.timeout(opts.requestTimeoutMs),
       });
       status = response.status;
       response.headers.forEach((value, key) => { headers[key] = value; });
-      text = await response.text();
+      if (binary && status === 200) bytes = Buffer.from(await response.arrayBuffer());
+      else text = await response.text();
     } catch (caught) {
       error = caught instanceof Error ? caught.message : String(caught);
     }
@@ -273,12 +299,15 @@ export function createFederationSession(config, {
     } catch {
       json = null;
     }
+    const recordedBody = bytes ? { bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }
+      : compactValue(json ?? text);
+    const recordedFiles = files ? files.map((file) => ({ bytes: file.bytes.length, field: file.field ?? 'file', name: file.name, sha256: createHash('sha256').update(file.bytes).digest('hex'), type: file.type ?? null })) : undefined;
     const record = {
-      at, body: json ?? text, durationMs: Date.now() - started, error, headers, label: callLabel, location: headers.location ?? null,
-      method, phase: s.phase, request: form, seq: id, status, url,
+      at, body: recordedBody, durationMs: Date.now() - started, error, files: recordedFiles, headers, label: callLabel, location: headers.location ?? null,
+      method, phase: s.phase, request: compactValue(form), seq: id, status, url,
     };
     appendFileSync(path.join(dir, 'requests.ndjson'), `${JSON.stringify(record)}\n`);
-    const result = { at, error, headers, json, location: headers.location ?? null, seq: id, status, text, url };
+    const result = { at, bytes, error, headers, json, location: headers.location ?? null, seq: id, status, text, url };
     if (tolerate) return result;
     if (status === 0) throw new Abort(`member down: ${method} ${url} did not answer (${error}) [requests.ndjson#${id}]`);
     if (status >= 500) {
@@ -292,7 +321,7 @@ export function createFederationSession(config, {
     return result;
   };
 
-  s.waitFor = async (what, probe, { deadlineMs = opts.deadlineMs } = {}) => {
+  s.waitFor = async (what, probe, { deadlineMs = opts.deadlineMs, pollMs = opts.pollMs } = {}) => {
     const started = Date.now();
     const deadline = started + deadlineMs;
     let last;
@@ -303,7 +332,7 @@ export function createFederationSession(config, {
         log(`  ⏱  ${what}: deadline (${deadlineMs} ms) reached`);
         return { ...last, ok: false, waitedMs: Date.now() - started };
       }
-      await sleep(opts.pollMs);
+      await sleep(pollMs);
     }
   };
 
@@ -346,14 +375,14 @@ export function createFederationSession(config, {
 
   // POST a signed write or delete. Follows a leader redirect within the same cluster (never a
   // wrong_cluster redirect); retries no_quorum like the 3x2 smokes unless retryNoQuorum is false.
-  s.submit = async (submitLabel, cluster, member, form, route = '/v1/propose-write', { follow = true, retryNoQuorum = true } = {}) => {
+  s.submit = async (submitLabel, cluster, member, form, route = '/v1/propose-write', { files = null, follow = true, retryNoQuorum = true } = {}) => {
     let target = `${member.url}${route}`;
     let response;
     for (let attempt = 0; attempt < 6; attempt += 1) {
       stats.writes += 1;
       if (stats.writes > opts.maxWrites) throw new Abort(`write budget of ${opts.maxWrites} requests exhausted`);
       const noQuorum = (status, json) => retryNoQuorum && status === 503 && JSON.stringify(json ?? '').includes('no_quorum');
-      response = await s.call(submitLabel, 'POST', target, { allow5xx: noQuorum, form });
+      response = await s.call(submitLabel, 'POST', target, { allow5xx: noQuorum, files, form });
       if (noQuorum(response.status, response.json)) {
         await sleep(opts.pollMs);
         continue;
