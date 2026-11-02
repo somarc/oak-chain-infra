@@ -41,7 +41,6 @@ fi
 OPS_PROXY_PORT="${OPS_PROXY_PORT:-8787}"
 OPS_PROXY_MODE="${OPS_PROXY_MODE:-proxy}"
 WAIT_SECONDS="${WAIT_SECONDS:-45}"
-MOCK_EPOCH_SECONDS="${OAK_MOCK_EPOCH_DURATION_SECONDS:-300}"
 ENABLE_WATCHDOG="${ENABLE_WATCHDOG:-true}"
 ENABLE_LOAD_OBSERVER="${ENABLE_LOAD_OBSERVER:-true}"
 RESET_CLUSTER_TEST_LOGS="${RESET_CLUSTER_TEST_LOGS:-true}"
@@ -88,13 +87,12 @@ validator_reactor_modules() {
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") [--fresh] [--build] [--cluster-size 3|5] [--mock-epoch-seconds N] [--reset-cluster-wallet] [--no-caffeinate] [--wait-seconds N]
+Usage: $(basename "$0") [--fresh] [--build] [--cluster-size 3|5] [--reset-cluster-wallet] [--no-caffeinate] [--wait-seconds N]
 
 Options:
   --fresh            Stop validators/proxy, wipe validator runtime state, clean Aeron dirs, then start clean.
   --build            Build oak-segment-consensus and optional validator-side modules present in the current branch.
   --cluster-size N   Aeron member count for mock cluster (3 or 5). Default: $CLUSTER_SIZE.
-  --mock-epoch-seconds N  Mock GC epoch duration in seconds (default: $MOCK_EPOCH_SECONDS).
   --reset-cluster-wallet  Delete and regenerate cluster wallet before startup.
   --no-caffeinate    Do not start sleep prevention.
   --wait-seconds N   Readiness wait timeout (default: $WAIT_SECONDS).
@@ -127,7 +125,6 @@ Environment:
   OAK_CONSENSUS_MAX_PENDING_MESSAGES    Backpressure pending cap (OSGi cfg + optional JVM fallback)
   OAK_CONSENSUS_BACKPRESSURE_TIMEOUT_MS Backpressure timeout ms (OSGi cfg + optional JVM fallback)
   OAK_QUEUE_TUNING_SYSTEM_PROP_FALLBACK true|false (default true). Keep JVM -D fallback while validating OSGi pickup.
-  OAK_MOCK_EPOCH_DURATION_SECONDS       Mock GC epoch duration in seconds (default: $MOCK_EPOCH_SECONDS).
   OAK_RATE_LIMIT_ENABLED                true|false HTTP rate limiting (default false in mock mode).
   OAK_CONSENSUS_JAR                     Absolute path of the consensus jar every member runs (default: workspace search).
 EOF
@@ -149,15 +146,6 @@ while (($# > 0)); do
         exit 1
       fi
       CLUSTER_SIZE="$1"
-      ;;
-    --mock-epoch-seconds)
-      shift
-      if [ -z "${1:-}" ] || ! [[ "$1" =~ ^[0-9]+$ ]] || [ "$1" -le 0 ]; then
-        echo "Invalid --mock-epoch-seconds value (use positive integer seconds)"
-        usage
-        exit 1
-      fi
-      MOCK_EPOCH_SECONDS="$1"
       ;;
     --no-caffeinate) NO_CAFFEINATE=true ;;
     --no-watchdog) ENABLE_WATCHDOG=false ;;
@@ -209,7 +197,6 @@ if [ -n "${OAK_CONSENSUS_JAR:-}" ]; then
   echo "• Consensus JAR override: $OAK_CONSENSUS_JAR (sha256 $OAK_CONSENSUS_JAR_SHA256)"
 fi
 export OAK_CLUSTER_SIZE="$CLUSTER_SIZE"
-export OAK_MOCK_EPOCH_DURATION_SECONDS="$MOCK_EPOCH_SECONDS"
 
 if [ "$CLUSTER_SIZE" = "5" ]; then
   NODES=(0 1 2 3 4)
@@ -973,7 +960,6 @@ write_launch_record() {
     "AERON_CLUSTER_BASE_PORT=$AERON_CLUSTER_BASE_PORT" \
     "AERON_DIR_BASE=${AERON_DIR_BASE:-}" \
     "AERON_RAMDISK_ROOT=${AERON_RAMDISK_ROOT:-}" \
-    "OAK_MOCK_EPOCH_DURATION_SECONDS=$MOCK_EPOCH_SECONDS" \
     "OAK_BLOCKCHAIN_MODE=$OAK_BLOCKCHAIN_MODE" \
     "OPS_PROXY_PORT=$OPS_PROXY_PORT" \
     "IPFS_API_HTTP=$IPFS_API_HTTP" \
@@ -1002,8 +988,7 @@ for node in "${NODES[@]}"; do
 
   rm -f "$pid_file"
   echo "• Starting validator-$node"
-  OAK_MOCK_EPOCH_DURATION_SECONDS="$MOCK_EPOCH_SECONDS" \
-    launch_detached_process "$pid_file" "$LOG_DIR/start-validator-${node}.log" \
+  launch_detached_process "$pid_file" "$LOG_DIR/start-validator-${node}.log" \
     "$VALIDATOR_SCRIPT" "$node"
   sleep 1
 

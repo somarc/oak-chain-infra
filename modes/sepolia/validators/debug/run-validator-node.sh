@@ -208,7 +208,6 @@ HEALTH_PEER_PROBE_MODE="${OAK_HEALTH_PEER_PROBE_MODE:-http}"
 AERON_SOCKET_SNDBUF="${AERON_SOCKET_SNDBUF:-16384}"
 AERON_SOCKET_RCVBUF="${AERON_SOCKET_RCVBUF:-16384}"
 AERON_RCV_INITIAL_WINDOW="${AERON_RCV_INITIAL_WINDOW:-16384}"
-MOCK_EPOCH_DURATION_SECONDS="${OAK_MOCK_EPOCH_DURATION_SECONDS:-300}"
 PROPOSAL_BATCH_MAX="${OAK_PROPOSAL_BATCH_MAX:-25}"
 PROPOSAL_FINALIZATION_CHUNK_SIZE="${OAK_PROPOSAL_FINALIZATION_CHUNK_SIZE:-25}"
 PROPOSAL_FINALIZATION_CHUNK_DELAY_MS="${OAK_PROPOSAL_FINALIZATION_CHUNK_DELAY_MS:-0}"
@@ -360,7 +359,6 @@ else
 fi
 echo "Peers: $PEERS"
 echo "Cluster Size: $AERON_CLUSTER_SIZE"
-echo "Epoch Duration Override: ${MOCK_EPOCH_DURATION_SECONDS}s"
 echo "Log File: $LOG_FILE"
 echo "Queue Tuning (target): persistence.enabled=$PROPOSAL_PERSISTENCE_ENABLED, flush.ms=$PROPOSAL_PERSISTENCE_FLUSH_MS, flush.batch=$PROPOSAL_PERSISTENCE_FLUSH_BATCH, batch.max=$PROPOSAL_BATCH_MAX, finalization.chunk.size=$PROPOSAL_FINALIZATION_CHUNK_SIZE, finalization.chunk.delay.ms=$PROPOSAL_FINALIZATION_CHUNK_DELAY_MS, max.pending.messages=$CONSENSUS_MAX_PENDING_MESSAGES, backpressure.timeout.ms=$CONSENSUS_BACKPRESSURE_TIMEOUT_MS"
 echo "Aeron Max Concurrent Sessions: $OAK_CLUSTER_MAX_CONCURRENT_SESSIONS"
@@ -416,11 +414,9 @@ java \
   -Daeron.cluster.basePort=$CLUSTER_BASE_PORT \
   -Daeron.dir="$AERON_DIR_BASE" \
   -Daeron.dir.name="$AERON_DIR" \
-  -Daeron.cluster.bootstrap=false \
   -Daeron.socket.so_sndbuf="$AERON_SOCKET_SNDBUF" \
   -Daeron.socket.so_rcvbuf="$AERON_SOCKET_RCVBUF" \
   -Daeron.rcv.initial.window.length="$AERON_RCV_INITIAL_WINDOW" \
-  -Doak.mock.epoch.duration.seconds="$MOCK_EPOCH_DURATION_SECONDS" \
   -Dwallet.keystore.path="$STORE_DIR/validator-keystore.properties" \
   -Dblobstore.type="$BLOBSTORE_TYPE" \
   -Dipfs.api.endpoint="$IPFS_API_ENDPOINT" \
@@ -429,8 +425,6 @@ java \
   -Doak.health.peerProbeMode="$HEALTH_PEER_PROBE_MODE" \
   $queue_tuning_jvm_args \
   $aeron_session_jvm_args \
-  ${BEACON_API_KEY:+-Dbeacon.api.key="$BEACON_API_KEY"} \
-  ${BEACON_API_URL:+-Dbeacon.api.url="$BEACON_API_URL"} \
   -jar "$JAR_FILE" \
   --port $HTTP_PORT \
   --store "$STORE_DIR" \

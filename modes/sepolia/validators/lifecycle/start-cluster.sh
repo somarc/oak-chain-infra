@@ -23,7 +23,6 @@ OPS_PROXY_PORT="${OPS_PROXY_PORT:-8787}"
 OPS_PROXY_MODE="${OPS_PROXY_MODE:-proxy}"
 OPS_PROXY_UPSTREAM="${OPS_PROXY_UPSTREAM:-http://127.0.0.1:8090}"
 WAIT_SECONDS="${WAIT_SECONDS:-60}"
-MOCK_EPOCH_SECONDS="${OAK_MOCK_EPOCH_DURATION_SECONDS:-300}"
 ENABLE_WATCHDOG="${ENABLE_WATCHDOG:-true}"
 ENABLE_LOAD_OBSERVER="${ENABLE_LOAD_OBSERVER:-true}"
 CLUSTER_SIZE="${OAK_CLUSTER_SIZE:-3}"
@@ -72,7 +71,6 @@ Options:
   --config path      Sepolia mode env file to source (default: $MODE_CONFIG_FILE).
   --rpc-url URL      Override OAK_BLOCKCHAIN_RPC_URL.
   --contract-address 0x... Override OAK_BLOCKCHAIN_CONTRACT_ADDRESS.
-  --mock-epoch-seconds N  Optional epoch override for local pacing tests (default: $MOCK_EPOCH_SECONDS).
   --reset-cluster-wallet  Delete and regenerate cluster wallet before startup.
   --no-caffeinate    Do not start sleep prevention.
   --wait-seconds N   Readiness wait timeout (default: $WAIT_SECONDS).
@@ -155,15 +153,6 @@ while (($# > 0)); do
       fi
       CLUSTER_SIZE="$1"
       ;;
-    --mock-epoch-seconds)
-      shift
-      if [ -z "${1:-}" ] || ! [[ "$1" =~ ^[0-9]+$ ]] || [ "$1" -le 0 ]; then
-        echo "Invalid --mock-epoch-seconds value (use positive integer seconds)"
-        usage
-        exit 1
-      fi
-      MOCK_EPOCH_SECONDS="$1"
-      ;;
     --config)
       shift
       if [ -z "${1:-}" ]; then
@@ -230,7 +219,6 @@ if [ "$CLUSTER_SIZE" != "3" ] && [ "$CLUSTER_SIZE" != "5" ]; then
   exit 1
 fi
 export OAK_CLUSTER_SIZE="$CLUSTER_SIZE"
-export OAK_MOCK_EPOCH_DURATION_SECONDS="$MOCK_EPOCH_SECONDS"
 
 if [ "$CLUSTER_SIZE" = "5" ]; then
   NODES=(0 1 2 3 4)
@@ -679,8 +667,7 @@ for node in "${NODES[@]}"; do
 
   rm -f "$pid_file"
   echo "• Starting validator-$node"
-  OAK_MOCK_EPOCH_DURATION_SECONDS="$MOCK_EPOCH_SECONDS" \
-    nohup "$VALIDATOR_SCRIPT" "$node" > "$LOG_DIR/start-validator-${node}.log" 2>&1 &
+  nohup "$VALIDATOR_SCRIPT" "$node" > "$LOG_DIR/start-validator-${node}.log" 2>&1 &
   echo $! > "$pid_file"
   sleep 1
 

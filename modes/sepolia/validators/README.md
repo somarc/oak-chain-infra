@@ -62,6 +62,5 @@ Validator-only local operations for Oak Chain Sepolia mode.
 - `IPFS_READY_TIMEOUT_SECONDS` (default: `30`)
 - `AUTO_START_IPFS` (default: `true`)
 - `IPFS_DAEMON_LOG_FILE` (default: `$HOME/oak-chain/logs/ipfs-daemon.log`)
-- `OAK_MOCK_EPOCH_DURATION_SECONDS` (default: `300`)
 - `ENABLE_WATCHDOG` (default: `true`)
 - `WATCHDOG_INTERVAL_SECONDS` (default: `5`)

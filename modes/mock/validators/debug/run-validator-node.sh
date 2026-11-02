@@ -185,7 +185,6 @@ HEALTH_PEER_PROBE_MODE="${OAK_HEALTH_PEER_PROBE_MODE:-http}"
 AERON_SOCKET_SNDBUF="${AERON_SOCKET_SNDBUF:-1048576}"
 AERON_SOCKET_RCVBUF="${AERON_SOCKET_RCVBUF:-1048576}"
 AERON_RCV_INITIAL_WINDOW="${AERON_RCV_INITIAL_WINDOW:-1048576}"
-MOCK_EPOCH_DURATION_SECONDS="${OAK_MOCK_EPOCH_DURATION_SECONDS:-300}"
 PROPOSAL_BATCH_MAX="${OAK_PROPOSAL_BATCH_MAX:-25}"
 PROPOSAL_FINALIZATION_CHUNK_SIZE="${OAK_PROPOSAL_FINALIZATION_CHUNK_SIZE:-25}"
 PROPOSAL_FINALIZATION_CHUNK_DELAY_MS="${OAK_PROPOSAL_FINALIZATION_CHUNK_DELAY_MS:-0}"
@@ -345,7 +344,6 @@ fi
 echo "Peers: $PEERS"
 echo "Cluster Size: $AERON_CLUSTER_SIZE"
 echo "Aeron Base Port: $CLUSTER_BASE_PORT"
-echo "Mock Epoch Duration: ${MOCK_EPOCH_DURATION_SECONDS}s"
 echo "Cluster Environment: ${OAK_CLUSTER_ENV:-}"
 echo "Aeron Session Timeout: ${OAK_CLUSTER_SESSION_TIMEOUT_SECONDS:-}s (minutes override: ${OAK_CLUSTER_SESSION_TIMEOUT_MINUTES:-none})"
 echo "Log File: $LOG_FILE"
@@ -433,11 +431,9 @@ exec java \
   -Daeron.cluster.basePort=$CLUSTER_BASE_PORT \
   -Daeron.dir="$AERON_DIR_BASE" \
   -Daeron.dir.name="$AERON_DIR" \
-  -Daeron.cluster.bootstrap=false \
   -Daeron.socket.so_sndbuf="$AERON_SOCKET_SNDBUF" \
   -Daeron.socket.so_rcvbuf="$AERON_SOCKET_RCVBUF" \
   -Daeron.rcv.initial.window.length="$AERON_RCV_INITIAL_WINDOW" \
-  -Doak.mock.epoch.duration.seconds="$MOCK_EPOCH_DURATION_SECONDS" \
   -Dwallet.keystore.path="$STORE_DIR/validator-keystore.properties" \
   -Dblobstore.type="$BLOBSTORE_TYPE" \
   -Dipfs.api.endpoint="$IPFS_API_ENDPOINT" \
@@ -448,8 +444,6 @@ exec java \
   $rate_limit_jvm_args \
   $aeron_session_jvm_args \
   $EXTRA_JAVA_OPTS \
-  ${BEACON_API_KEY:+-Dbeacon.api.key="$BEACON_API_KEY"} \
-  ${BEACON_API_URL:+-Dethereum.beacon.api.url="$BEACON_API_URL"} \
   -jar "$JAR_FILE" \
   --port $HTTP_PORT \
   --store "$STORE_DIR" \

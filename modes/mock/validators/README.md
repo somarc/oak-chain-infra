@@ -13,7 +13,6 @@ Validator-only local operations for Oak Chain mock mode.
 - `lifecycle/start-cluster.sh`
   - Launches validator nodes 0/1/2 in background.
   - Optional `--build` compiles `oak-segment-consensus` and any optional validator-side modules present in the current `jackrabbit-oak` branch before launch.
-  - Optional `--mock-epoch-seconds N` sets mock-mode GC epoch duration (default 300s); Beacon telemetry stays local and follows the Sepolia clock shape.
   - Waits for IPFS API readiness before launching validators.
   - Writes `$PID_DIR/cluster-launch.env` (size, ports, Aeron dirs, `EXTRA_JAVA_OPTS`) so single members can later be restarted with identical membership and sharding flags. One `KEY=VALUE` per line, value verbatim after the first `=`, never sourced (`lifecycle/lib/launch-record.sh`).
   - Auto-starts IPFS daemon by default when API is unavailable (`AUTO_START_IPFS=true`).
@@ -112,7 +111,6 @@ Validator-only local operations for Oak Chain mock mode.
 - `IPFS_READY_TIMEOUT_SECONDS` (default: `30`)
 - `AUTO_START_IPFS` (default: `true`)
 - `IPFS_DAEMON_LOG_FILE` (default: `$HOME/oak-chain/logs/ipfs-daemon.log`)
-- `OAK_MOCK_EPOCH_DURATION_SECONDS` (default: `300`)
 - `ENABLE_WATCHDOG` (default: `true`)
 - `WATCHDOG_INTERVAL_SECONDS` (default: `5`)
 - `CLUSTER_RUNTIME_ROOT` (default: `$HOME/oak-chain`)
