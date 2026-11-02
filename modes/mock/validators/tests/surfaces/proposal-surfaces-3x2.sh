@@ -252,21 +252,6 @@ resolve_cluster() {
   )
 }
 
-cluster_ports() {
-  local cluster_size="$1"
-  local http_base_port="$2"
-  local http_port_step="$3"
-  local node_count=3
-  if [ "$cluster_size" = "5" ]; then
-    node_count=5
-  fi
-
-  local idx
-  for ((idx=0; idx<node_count; idx++)); do
-    printf '%s\n' $((http_base_port + (idx * http_port_step)))
-  done
-}
-
 current_role_on_port() {
   local port="$1"
   local body
