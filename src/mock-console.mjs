@@ -12,6 +12,8 @@ import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 
+import { flag, option } from './ops-tui.mjs';
+
 const DEFAULT_INTERVAL_MS = 2_000;
 const PROBE_TIMEOUT_MS = 1_500;
 const MAX_OUTPUT_LINES = 500;
@@ -35,16 +37,6 @@ const KEY = Object.freeze({
   escape: '\u001b',
   up: '\u001b[A',
 });
-
-function option(options, name, fallback = undefined) {
-  return Object.prototype.hasOwnProperty.call(options, name) ? options[name] : fallback;
-}
-
-function flag(options, name) {
-  const value = option(options, name, false);
-  if (typeof value === 'string') return value.toLowerCase() !== 'false';
-  return Boolean(value);
-}
 
 function paint(enabled, names, text) {
   if (!enabled) return String(text);

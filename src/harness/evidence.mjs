@@ -16,11 +16,11 @@ import path from 'node:path';
 
 export const STATUS = Object.freeze({ FAIL: 'FAIL', PASS: 'PASS', UNKNOWN: 'UNKNOWN' });
 
-function compactStamp(date) {
+export function compactStamp(date) {
   return date.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
 }
 
-function cell(value) {
+export function cell(value) {
   if (value === undefined || value === null) return '';
   const text = typeof value === 'string' ? value : JSON.stringify(value);
   return text.replace(/[\t\r\n]+/g, ' ');
