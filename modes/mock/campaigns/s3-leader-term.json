@@ -1,0 +1,8 @@
+{
+  "id": "s3-leader-term",
+  "title": "S3-04 leader TERM in a quiet window: one new leader, committed writes kept, old leader rejoins as follower",
+  "riskClass": "C",
+  "charter": ["S3-04"],
+  "scenario": "leader-fault",
+  "params": { "mode": "term", "writesBefore": 3, "inFlight": 0, "electionSeconds": 90, "terminalSeconds": 90, "convergenceSeconds": 60, "recoverySeconds": 180 }
+}

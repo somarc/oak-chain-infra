@@ -1,0 +1,8 @@
+{
+  "id": "o2-convergence",
+  "title": "O2-05 recursive convergence: strict typed state digest of / identical on every validator",
+  "riskClass": "A",
+  "charter": ["O2-05"],
+  "scenario": "convergence",
+  "params": {}
+}

@@ -1,0 +1,8 @@
+{
+  "id": "r6-restart-graceful",
+  "title": "R6-01 all-member graceful restart: writes and deletes survive, state digest unchanged",
+  "riskClass": "C",
+  "charter": ["R6-01"],
+  "scenario": "cluster-restart",
+  "params": { "mode": "term", "writes": 4, "terminalSeconds": 90, "convergenceSeconds": 60, "recoverySeconds": 180 }
+}

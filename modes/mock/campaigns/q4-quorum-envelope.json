@@ -1,0 +1,8 @@
+{
+  "id": "q4-quorum-envelope",
+  "title": "Q4-01/02/03 quorum envelope: progress at a majority, none below it, full recovery",
+  "riskClass": "C",
+  "charter": ["Q4-01", "Q4-02", "Q4-03"],
+  "scenario": "quorum-envelope",
+  "params": { "quorumLossSettleSeconds": 10, "noQuorumSeconds": 45, "terminalSeconds": 90, "convergenceSeconds": 60, "recoverySeconds": 180 }
+}

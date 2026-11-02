@@ -1,0 +1,8 @@
+{
+  "id": "r6-restart-hard",
+  "title": "R6-02 all-member hard restart (SIGKILL): writes and deletes survive, state digest unchanged",
+  "riskClass": "C",
+  "charter": ["R6-02"],
+  "scenario": "cluster-restart",
+  "params": { "mode": "kill", "writes": 4, "terminalSeconds": 90, "convergenceSeconds": 60, "recoverySeconds": 180 }
+}
