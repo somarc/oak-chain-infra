@@ -5,9 +5,12 @@ HOST="${HOST:-http://127.0.0.1}"
 CLUSTER_SIZE="${OAK_CLUSTER_SIZE:-3}"
 PORTS=()
 OPS_PROXY_URL="${OPS_PROXY_URL:-http://127.0.0.1:8787}"
-PREVENT_SLEEP_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/prevent-sleep.sh"
-WATCHDOG_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../monitoring/validator-failure-watchdog.sh"
-LOAD_OBSERVER_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../monitoring/load-bottleneck-observer.sh"
+# Monitoring and prevent-sleep are shared with mock mode; the watchdog calls this mode's status-cluster.sh.
+export LIFECYCLE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MOCK_VALIDATORS_DIR="$LIFECYCLE_DIR/../../../mock/validators"
+PREVENT_SLEEP_SCRIPT="$MOCK_VALIDATORS_DIR/lifecycle/prevent-sleep.sh"
+WATCHDOG_SCRIPT="$MOCK_VALIDATORS_DIR/monitoring/validator-failure-watchdog.sh"
+LOAD_OBSERVER_SCRIPT="$MOCK_VALIDATORS_DIR/monitoring/load-bottleneck-observer.sh"
 CLUSTER_WALLET_FILE="${CLUSTER_WALLET_FILE:-$HOME/oak-chain/cluster-keystore.properties}"
 IPFS_API_HTTP="${IPFS_API_HTTP:-http://127.0.0.1:5001}"
 

@@ -17,11 +17,11 @@ const ANSI = Object.freeze({
   yellow: '\u001b[33m',
 });
 
-function option(options, name, fallback = undefined) {
+export function option(options, name, fallback = undefined) {
   return Object.prototype.hasOwnProperty.call(options, name) ? options[name] : fallback;
 }
 
-function flag(options, name) {
+export function flag(options, name) {
   const value = option(options, name, false);
   if (typeof value === 'string') return value.toLowerCase() !== 'false';
   return Boolean(value);

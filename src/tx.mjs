@@ -11,15 +11,16 @@
 // Test keys are deterministic and public by design: they exist so that local, mock and
 // sepolia test traffic is signed by keys we hold. Never use them for real value.
 
-import { randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 
-import { hmac } from '@noble/hashes/hmac.js';
-import { keccak_256 as keccak256 } from '@noble/hashes/sha3.js';
-import { sha256 } from '@noble/hashes/sha2.js';
 import * as secp from '@noble/secp256k1';
 
-secp.hashes.hmacSha256 = (key, message) => hmac(sha256, key, message);
-secp.hashes.sha256 = sha256;
+// Ethereum's Keccak-256 (not SHA3-256) needs OpenSSL >= 3.2, bundled from Node 24.5 (package.json engines).
+const digest = (algorithm, bytes) => new Uint8Array(createHash(algorithm).update(bytes).digest());
+const keccak256 = (bytes) => digest('keccak-256', bytes);
+
+secp.hashes.hmacSha256 = (key, message) => new Uint8Array(createHmac('sha256', key).update(message).digest());
+secp.hashes.sha256 = (bytes) => digest('sha256', bytes);
 
 const ENCODER = new TextEncoder();
 const PREFIX = '\u0019Ethereum Signed Message:\n';

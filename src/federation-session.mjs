@@ -22,7 +22,7 @@ import {
 import path from 'node:path';
 
 import { classifyOperation } from './harness/client.mjs';
-import { STATUS, summarize } from './harness/evidence.mjs';
+import { STATUS, cell, summarize } from './harness/evidence.mjs';
 import { testKey } from './tx.mjs';
 
 export { STATUS };
@@ -188,12 +188,6 @@ export function compactValue(value, max = 1024) {
   if (Array.isArray(value)) return value.map((item) => compactValue(item, max));
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, compactValue(item, max)]));
   return value;
-}
-
-export function cell(value) {
-  if (value === undefined || value === null) return '';
-  const text = typeof value === 'string' ? value : JSON.stringify(value);
-  return text.replace(/[\t\r\n]+/g, ' ');
 }
 
 

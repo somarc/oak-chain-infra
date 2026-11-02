@@ -28,12 +28,12 @@ Validator-only local operations for Oak Chain Sepolia mode.
   - Includes watchdog status.
 - `debug/run-validator-node.sh`
   - Runs one validator node directly for focused debugging.
-- `monitoring/validator-failure-watchdog.sh`
+- `../../mock/validators/monitoring/validator-failure-watchdog.sh` (shared with mock; the sepolia lifecycle scripts export `LIFECYCLE_DIR` so it calls this mode's `status-cluster.sh`)
   - Polls validator health and captures post-mortem bundles when a validator transitions from UP to DOWN.
   - Post-mortem output path:
     - `~/oak-chain/postmortem/validator-<node>-<timestamp>/`
   - Captures status/API/process evidence and recent logs to preserve root-cause clues.
-- `monitoring/triage-validator-logs.sh`
+- `../../mock/validators/monitoring/triage-validator-logs.sh` (shared with mock)
   - Fast forensic summary across validator logs (IPFS failures, standby mismatch loop, Aeron retries, rate-limit pressure, queue stress, fatal/exception events).
   - Writes a timestamped report to:
     - `~/oak-chain/logs/validator-triage-<timestamp>.txt`
@@ -62,6 +62,5 @@ Validator-only local operations for Oak Chain Sepolia mode.
 - `IPFS_READY_TIMEOUT_SECONDS` (default: `30`)
 - `AUTO_START_IPFS` (default: `true`)
 - `IPFS_DAEMON_LOG_FILE` (default: `$HOME/oak-chain/logs/ipfs-daemon.log`)
-- `OAK_MOCK_EPOCH_DURATION_SECONDS` (default: `300`)
 - `ENABLE_WATCHDOG` (default: `true`)
 - `WATCHDOG_INTERVAL_SECONDS` (default: `5`)

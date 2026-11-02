@@ -13,7 +13,6 @@ Validator-only local operations for Oak Chain mock mode.
 - `lifecycle/start-cluster.sh`
   - Launches validator nodes 0/1/2 in background.
   - Optional `--build` compiles `oak-segment-consensus` and any optional validator-side modules present in the current `jackrabbit-oak` branch before launch.
-  - Optional `--mock-epoch-seconds N` sets mock-mode GC epoch duration (default 300s); Beacon telemetry stays local and follows the Sepolia clock shape.
   - Waits for IPFS API readiness before launching validators.
   - Writes `$PID_DIR/cluster-launch.env` (size, ports, Aeron dirs, `EXTRA_JAVA_OPTS`) so single members can later be restarted with identical membership and sharding flags. One `KEY=VALUE` per line, value verbatim after the first `=`, never sourced (`lifecycle/lib/launch-record.sh`).
   - Auto-starts IPFS daemon by default when API is unavailable (`AUTO_START_IPFS=true`).
@@ -37,6 +36,7 @@ Validator-only local operations for Oak Chain mock mode.
 - `lifecycle/start-3x2.sh`
   - Starts two separate 3-node clusters for local sharding proof.
   - Reuses `start-cluster.sh` twice with scoped runtime roots, non-overlapping ports, and inverse shard ownership.
+  - `start/stop/status-3x2.sh` run the `-3x3.sh` scripts with the 3x2 config packs and an empty `CLUSTER_C_CONFIG`, which skips cluster C.
   - Disables watchdog/load-observer by default for the dual-cluster topology.
   - Reads shared cluster defaults from `config/3x2-common.env` and per-cluster overrides from `config/3x2-cluster-a.env` / `config/3x2-cluster-b.env`.
 - `lifecycle/stop-3x2.sh`
@@ -52,6 +52,8 @@ Validator-only local operations for Oak Chain mock mode.
 - `debug/run-validator-node.sh`
   - Runs one validator node directly for focused debugging.
   - `OAK_CONSENSUS_JAR=/abs/path.jar` runs that exact jar instead of the workspace search (which is otherwise unchanged) and prints its sha256; `OAK_CONSENSUS_JAR_SHA256` refuses the jar if its content changed. `start-cluster.sh` hashes it once, passes the hash to every member and stores path and hash in the launch record, so `member.sh` restarts the same jar and refuses another one.
+- Attaching a Java debugger
+  - There is no separate debug launcher. Pass JDWP through `EXTRA_JAVA_OPTS`, bound to loopback, to one member: `EXTRA_JAVA_OPTS='-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=127.0.0.1:5005' ./lifecycle/member.sh restart 1`. A member restart is a class C action: on the protected live root it needs explicit approval (charter §3.2). Your environment's `EXTRA_JAVA_OPTS` replaces the recorded one for that start, so on a sharded cluster include the recorded sharding flags too. Never bind JDWP to `*`.
 - `monitoring/validator-failure-watchdog.sh`
   - Polls validator health and captures post-mortem bundles when a validator transitions from UP to DOWN.
   - Post-mortem output path:
@@ -81,11 +83,11 @@ Validator-only local operations for Oak Chain mock mode.
 
 ## Smoke Validation
 
-- `tests/validator-api-smoke.sh`
-- `tests/sharding-3x2-smoke.sh`
+- `tests/smoke/validator-api-smoke.sh`
+- `tests/routing/sharding-3x2-smoke.sh`
 - `tests/routing/federation-3x2-smoke.sh`
 - `tests/routing/federation-3x2-gc.sh` (after the smoke; cluster B launched with `FED_3X2_B_GC_JAVA_OPTS=test`)
-- `tests/mock-scale-staircase-monitor.sh`
+- `monitoring/mock-scale-staircase-monitor.sh`
 
 ## Troubleshooting
 
@@ -109,7 +111,6 @@ Validator-only local operations for Oak Chain mock mode.
 - `IPFS_READY_TIMEOUT_SECONDS` (default: `30`)
 - `AUTO_START_IPFS` (default: `true`)
 - `IPFS_DAEMON_LOG_FILE` (default: `$HOME/oak-chain/logs/ipfs-daemon.log`)
-- `OAK_MOCK_EPOCH_DURATION_SECONDS` (default: `300`)
 - `ENABLE_WATCHDOG` (default: `true`)
 - `WATCHDOG_INTERVAL_SECONDS` (default: `5`)
 - `CLUSTER_RUNTIME_ROOT` (default: `$HOME/oak-chain`)

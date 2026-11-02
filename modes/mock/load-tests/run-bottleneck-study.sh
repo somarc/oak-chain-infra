@@ -11,7 +11,6 @@ mkdir -p "$LOG_DIR"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 
 QUEUE_CSV="${LOG_DIR}/queue-samples-${TIMESTAMP}.csv"
-METRICS_CSV="${LOG_DIR}/metrics-${TIMESTAMP}.csv"
 LOG_WATCH="${LOG_DIR}/validator-log-watch-${TIMESTAMP}.log"
 
 log() {
@@ -47,15 +46,6 @@ python3 "$(dirname "$0")/queue-sampler.py" \
   --out "${QUEUE_CSV}" &
 PIDS+=($!)
 
-log "Starting metrics monitor..."
-VALIDATOR_URL="${HOST}:${NODES%%,*}" \
-INTERVAL_SECONDS="${INTERVAL_SECONDS}" \
-DURATION_SECONDS="${DURATION_SECONDS}" \
-CSV_LOG="${METRICS_CSV}" \
-LOG_DIR="${LOG_DIR}" \
-"$(dirname "$0")/monitor-metrics.sh" &
-PIDS+=($!)
-
 log "Starting validator log watcher..."
 LOG_DIR="${LOG_DIR}" \
 OUT_DIR="${LOG_DIR}" \
@@ -65,7 +55,6 @@ PIDS+=($!)
 
 log "Monitors running (PIDs: ${PIDS[*]})"
 log "Queue samples: ${QUEUE_CSV}"
-log "Metrics CSV: ${METRICS_CSV}"
 log "Log watch: ${LOG_WATCH}"
 
 sleep "${DURATION_SECONDS}"

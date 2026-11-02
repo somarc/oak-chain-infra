@@ -4,7 +4,7 @@
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { createRun, STATUS } from './evidence.mjs';
+import { compactStamp, createRun, STATUS } from './evidence.mjs';
 import { FAULT_SCENARIOS } from './fault-scenarios.mjs';
 import { waitSettled } from './faults.mjs';
 import { createHttp } from './http.mjs';
@@ -164,10 +164,6 @@ export async function loadSuite(repoRoot, name) {
   if (!suite) throw new Error(`Unknown suite ${name}. Available: ${suites.map((entry) => entry.id).join(', ') || 'none'}`);
   const campaigns = await Promise.all(suite.campaigns.map((id) => loadCampaign(repoRoot, id)));
   return { campaigns, suite };
-}
-
-function compactStamp(date) {
-  return date.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
 }
 
 export function renderSuiteReport({ manifest, results, suite, summary }) {

@@ -7,7 +7,8 @@ CONFIG_DIR="$SCRIPT_DIR/../config"
 BASE_CONFIGS=("$CONFIG_DIR/mock.env" "$CONFIG_DIR/ipfs.env")
 CLUSTER_A_CONFIG="${CLUSTER_A_CONFIG:-$CONFIG_DIR/3x3-cluster-a.env}"
 CLUSTER_B_CONFIG="${CLUSTER_B_CONFIG:-$CONFIG_DIR/3x3-cluster-b.env}"
-CLUSTER_C_CONFIG="${CLUSTER_C_CONFIG:-$CONFIG_DIR/3x3-cluster-c.env}"
+# start/stop/status-3x2.sh run these scripts with CLUSTER_C_CONFIG set but empty: no cluster C.
+CLUSTER_C_CONFIG="${CLUSTER_C_CONFIG-$CONFIG_DIR/3x3-cluster-c.env}"
 FORWARD_ARGS=()
 WITH_MONITORS=false
 BUILD_ONCE=false
@@ -17,13 +18,13 @@ usage() {
 Usage: $(basename "$0") [start-cluster args...] [--cluster-a-config path] [--cluster-b-config path] [--cluster-c-config path] [--with-monitors]
 
 Default behavior:
-  - starts clusters A, B, and C as separate 3-node Aeron clusters
-  - forwards --build only to cluster A so jars are built once per 3x3 launch
-  - disables watchdog/load-observer for the 3x3 topology unless --with-monitors is set
+  - starts clusters A, B, and C as separate 3-node Aeron clusters (A and B only for 3x2)
+  - forwards --build only to cluster A so jars are built once per launch
+  - disables watchdog/load-observer for the multi-cluster topology unless --with-monitors is set
   - sources:
       * modes/mock/validators/config/mock.env
       * modes/mock/validators/config/ipfs.env
-      * cluster-specific 3x3 env file
+      * cluster-specific 3x3 (or 3x2) env file
 EOF
 }
 
@@ -83,9 +84,10 @@ validate_no_aeron_overlap() {
 
   IFS='|' read -r a_name a_size a_start a_end < <(cluster_aeron_range "$CLUSTER_A_CONFIG")
   IFS='|' read -r b_name b_size b_start b_end < <(cluster_aeron_range "$CLUSTER_B_CONFIG")
-  IFS='|' read -r c_name c_size c_start c_end < <(cluster_aeron_range "$CLUSTER_C_CONFIG")
 
   assert_distinct_aeron_ranges "$a_name" "$a_size" "$a_start" "$a_end" "$b_name" "$b_size" "$b_start" "$b_end"
+  [ -n "$CLUSTER_C_CONFIG" ] || return 0
+  IFS='|' read -r c_name c_size c_start c_end < <(cluster_aeron_range "$CLUSTER_C_CONFIG")
   assert_distinct_aeron_ranges "$a_name" "$a_size" "$a_start" "$a_end" "$c_name" "$c_size" "$c_start" "$c_end"
   assert_distinct_aeron_ranges "$b_name" "$b_size" "$b_start" "$b_end" "$c_name" "$c_size" "$c_start" "$c_end"
 }
@@ -153,8 +155,12 @@ else
   start_named_cluster "cluster-a" "$CLUSTER_A_CONFIG"
 fi
 start_named_cluster "cluster-b" "$CLUSTER_B_CONFIG"
-start_named_cluster "cluster-c" "$CLUSTER_C_CONFIG"
+TOPOLOGY=3x2
+if [ -n "$CLUSTER_C_CONFIG" ]; then
+  start_named_cluster "cluster-c" "$CLUSTER_C_CONFIG"
+  TOPOLOGY=3x3
+fi
 
 echo ""
-echo "✅ 3x3 topology launch submitted."
-echo "   Check status with: $SCRIPT_DIR/status-3x3.sh"
+echo "✅ ${TOPOLOGY} topology launch submitted."
+echo "   Check status with: $SCRIPT_DIR/status-${TOPOLOGY}.sh"

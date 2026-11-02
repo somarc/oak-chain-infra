@@ -60,15 +60,12 @@ const MOCK_SCRIPT_CANDIDATES = {
   verify: {
     binary: [
       'modes/mock/validators/tests/integration/test-binary-upload.sh',
-      'modes/mock/validators/tests/test-binary-upload.sh',
     ],
     smoke: [
       'modes/mock/validators/tests/smoke/validator-api-smoke.sh',
-      'modes/mock/validators/tests/validator-api-smoke.sh',
     ],
     'surfaces-single': [
       'modes/mock/validators/tests/surfaces/proposal-surfaces-single-cluster.sh',
-      'modes/mock/validators/tests/proposal-surfaces-single-cluster.sh',
     ],
   },
 };
@@ -93,11 +90,9 @@ const LAB_SCRIPT_CANDIDATES = {
   verify: {
     staircase: [
       'modes/mock/validators/tests/suites/mock-scale-staircase.sh',
-      'modes/mock/validators/tests/mock-scale-staircase.sh',
     ],
     'surfaces-3x2': [
       'modes/mock/validators/tests/surfaces/proposal-surfaces-3x2.sh',
-      'modes/mock/validators/tests/proposal-surfaces-3x2.sh',
     ],
   },
 };
