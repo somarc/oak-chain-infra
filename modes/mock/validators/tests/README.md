@@ -3,8 +3,8 @@
 Focused validation scripts for local validator clusters, organized by test
 intent instead of historical file drift.
 
-Old top-level commands are preserved as wrappers for compatibility, but new
-work should prefer the categorized paths below.
+The old top-level wrappers (`tests/validator-api-smoke.sh` and friends) were
+removed; use the categorized paths below.
 
 The normative design and evidence requirements for new consensus validation
 work are in [CONSENSUS-TEST-CHARTER.md](CONSENSUS-TEST-CHARTER.md). Existing
@@ -277,13 +277,6 @@ bash ./surfaces/proposal-surfaces-3x2.sh
 
 # Full staircase run
 bash ./suites/mock-scale-staircase.sh
-
-# Backward-compatible wrapper entrypoints still work
-./validator-api-smoke.sh
-bash ./proposal-surfaces-single-cluster.sh
-bash ./proposal-surfaces-3x2.sh
-bash ./mock-scale-staircase.sh
-./test-binary-upload.sh
 ```
 
 ## Exact Run Commands
@@ -313,7 +306,7 @@ Run the staircase monitor in a second terminal:
 
 ```bash
 cd /Users/mhess/aem/aem-code/OAK
-bash oak-chain-infra/modes/mock/validators/tests/mock-scale-staircase-monitor.sh \
+bash oak-chain-infra/modes/mock/validators/monitoring/mock-scale-staircase-monitor.sh \
   --run-log /tmp/oak-mock-scale-staircase-overnight.log \
   --artifact-root /tmp/oak-mock-scale-staircase-artifacts
 ```

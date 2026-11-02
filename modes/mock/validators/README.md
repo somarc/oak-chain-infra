@@ -83,11 +83,11 @@ Validator-only local operations for Oak Chain mock mode.
 
 ## Smoke Validation
 
-- `tests/validator-api-smoke.sh`
-- `tests/sharding-3x2-smoke.sh`
+- `tests/smoke/validator-api-smoke.sh`
+- `tests/routing/sharding-3x2-smoke.sh`
 - `tests/routing/federation-3x2-smoke.sh`
 - `tests/routing/federation-3x2-gc.sh` (after the smoke; cluster B launched with `FED_3X2_B_GC_JAVA_OPTS=test`)
-- `tests/mock-scale-staircase-monitor.sh`
+- `monitoring/mock-scale-staircase-monitor.sh`
 
 ## Troubleshooting
 
