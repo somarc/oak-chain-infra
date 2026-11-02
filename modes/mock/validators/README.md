@@ -47,7 +47,8 @@ Validator-only local operations for Oak Chain mock mode.
   - Enterprise-federation topology: cluster A (enterprise `0xa1…a1`, HTTP 8290/8292/8294, Aeron 9800, OPS proxy 8797) and cluster B (enterprise `0xb2…b2`, HTTP 8390/8392/8394, Aeron 10200, OPS proxy 8798), federated through one static-file directory (`$FED_3X2_ROOT/directory.json`) instead of `oak.sharding.*` routes. Config: `config/fed-3x2-*.env`.
   - Root-bound: they act only on `$FED_3X2_ROOT/cluster-{a,b}` (default root `$HOME/oak-chain-federation/3x2`) and refuse any root equal to, under, above or symlinked into `$HOME/oak-chain` (`lifecycle/lib/fed-3x2.sh`). `--fresh` resets only those roots and moves the directory file aside.
   - `start-fed-3x2.sh` requires `OAK_CONSENSUS_JAR` (the jar built from `jackrabbit-oak` `feature/enterprise-federation`), refuses `--build`, refuses ports held by anything outside the federation roots, keeps watchdog and load observer off, and never auto-starts IPFS.
-  - Proof: `tests/routing/federation-3x2-smoke.sh` (see `tests/README.md`).
+  - `FED_3X2_B_GC_JAVA_OPTS=test` launches cluster B (only) with the GC test profile (`FED_3X2_GC_TEST_JAVA_OPTS` in `lifecycle/lib/fed-3x2.sh`: tail GC every minute, full every two, backoff and size-delta guards off, binary GC every minute with a one-minute grace and a 30 s delete delay); it lands in B's `EXTRA_JAVA_OPTS` and launch record. Explicit `-Doak.gc.*` options are accepted too; anything else is refused. Cluster A keeps the runtime defaults.
+  - Proof: `tests/routing/federation-3x2-smoke.sh`, then `federation-3x2-failover.sh` and `federation-3x2-gc.sh` (see `tests/README.md`).
 - `debug/run-validator-node.sh`
   - Runs one validator node directly for focused debugging.
   - `OAK_CONSENSUS_JAR=/abs/path.jar` runs that exact jar instead of the workspace search (which is otherwise unchanged) and prints its sha256; `OAK_CONSENSUS_JAR_SHA256` refuses the jar if its content changed. `start-cluster.sh` hashes it once, passes the hash to every member and stores path and hash in the launch record, so `member.sh` restarts the same jar and refuses another one.
@@ -83,6 +84,7 @@ Validator-only local operations for Oak Chain mock mode.
 - `tests/validator-api-smoke.sh`
 - `tests/sharding-3x2-smoke.sh`
 - `tests/routing/federation-3x2-smoke.sh`
+- `tests/routing/federation-3x2-gc.sh` (after the smoke; cluster B launched with `FED_3X2_B_GC_JAVA_OPTS=test`)
 - `tests/mock-scale-staircase-monitor.sh`
 
 ## Troubleshooting
@@ -119,6 +121,7 @@ Validator-only local operations for Oak Chain mock mode.
 - `AERON_GLOBAL_TMP_CLEANUP` (default: `false`; keep it false for `3x2`)
 - `OAK_CONSENSUS_JAR` (absolute path of the consensus jar every member runs; default: workspace search; recorded with its sha256 in the launch record)
 - `FED_3X2_ROOT` (federation topology root, default `$HOME/oak-chain-federation/3x2`; never at or under `$HOME/oak-chain`)
+- `FED_3X2_B_GC_JAVA_OPTS` (federation cluster B only: `test` or `-Doak.gc.*` options appended to its `EXTRA_JAVA_OPTS`; set it again when restarting a B member with `member.sh` under `config/fed-3x2-cluster-b.env`, whose environment `EXTRA_JAVA_OPTS` wins over the record)
 - `EXTRA_JAVA_OPTS` (used by the multi-cluster configs to turn on sharding JVM flags; persisted in the launch record)
 - `MONITOR_INTERVAL_SECONDS` (default: `30` for `mock-scale-staircase-monitor.sh`)
 - `MONITOR_TIMEOUT_SECONDS` (default: `0` for `mock-scale-staircase-monitor.sh`, disabled)

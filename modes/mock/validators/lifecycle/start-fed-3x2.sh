@@ -35,6 +35,11 @@ and must already be running (AUTO_START_IPFS defaults to false here).
 Environment:
   OAK_CONSENSUS_JAR  Required. Absolute path of the jar built from jackrabbit-oak feature/enterprise-federation.
   FED_3X2_ROOT       Federation root (default: \$HOME/$FED_3X2_DEFAULT_ROOT_SUFFIX). Never at or under \$HOME/oak-chain.
+  FED_3X2_B_GC_JAVA_OPTS
+                     Optional GC overrides for cluster B only, appended to its EXTRA_JAVA_OPTS (and so to its
+                     launch record). "test" = the federation-3x2-gc.sh profile:
+                     $FED_3X2_GC_TEST_JAVA_OPTS
+                     Otherwise explicit -Doak.gc.<name>=<value> options. Cluster A keeps the runtime defaults.
 EOF
 }
 
@@ -88,6 +93,14 @@ B_FACTS="$(cluster_facts b)"
 IFS='|' read -r FED_ROOT A_ROOT A_SIZE A_HTTP A_STEP A_AERON A_OPS <<<"$A_FACTS"
 IFS='|' read -r _ B_ROOT B_SIZE B_HTTP B_STEP B_AERON B_OPS <<<"$B_FACTS"
 
+B_GC_OPTS="$(fed_3x2_gc_java_opts "${FED_3X2_B_GC_JAVA_OPTS:-}")"
+if [ -n "$B_GC_OPTS" ]; then
+  echo "• Cluster B GC overrides (FED_3X2_B_GC_JAVA_OPTS): $B_GC_OPTS"
+else
+  echo "• Cluster B GC: runtime defaults (FED_3X2_B_GC_JAVA_OPTS unset)"
+fi
+echo "• Cluster A GC: runtime defaults"
+
 a_aeron_end=$((A_AERON + (A_SIZE - 1) * 100 + 6))
 b_aeron_end=$((B_AERON + (B_SIZE - 1) * 100 + 6))
 if [ "$A_AERON" -le "$b_aeron_end" ] && [ "$B_AERON" -le "$a_aeron_end" ]; then
@@ -136,5 +149,6 @@ echo ""
 echo "✅ Federation 3x2 launch submitted."
 echo "   root:      $FED_ROOT"
 echo "   jar:       $OAK_CONSENSUS_JAR (sha256 $JAR_SHA256)"
+echo "   B GC opts: ${B_GC_OPTS:-runtime defaults}"
 echo "   directory: $DIRECTORY_FILE (written by tests/routing/federation-3x2-smoke.sh)"
 echo "   status:    $SCRIPT_DIR/status-fed-3x2.sh"
