@@ -5,7 +5,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
-import { formatSummary, listCampaigns, runCampaign } from './harness/index.mjs';
+import { formatSummary, listCampaigns, listSuites, runCampaign, runSuite } from './harness/index.mjs';
 import { runMockConsole } from './mock-console.mjs';
 import { runTx } from './tx-cli.mjs';
 import { runOpsBoard } from './ops-tui.mjs';
@@ -816,8 +816,31 @@ async function runCampaignCommand(verb, name, options) {
     }
     return;
   }
+  if (verb === 'suites') {
+    for (const suite of await listSuites(REPO_ROOT)) {
+      println(`${suite.id.padEnd(22)} ${suite.campaigns.length} campaigns  ${suite.title}`);
+    }
+    return;
+  }
+  if (verb === 'suite' && name) {
+    const result = await runSuite(name, options, {
+      log: (line) => process.stderr.write(`${line}\n`),
+      repoRoot: REPO_ROOT,
+    });
+    const mark = (status) => (status === 'PASS' ? '✔' : '✕');
+    process.stdout.write(`${mark(result.summary.status)} suite ${result.summary.suite}: ${result.summary.status}\n`);
+    process.stdout.write(`  required ${result.summary.required.pass} pass · ${result.summary.required.fail} fail · ${result.summary.required.unknown} unknown (of ${result.summary.required.total})\n`);
+    for (const entry of result.results) {
+      process.stdout.write(`  ${mark(entry.summary.status)} ${entry.campaign.id.padEnd(22)} ${entry.summary.required.pass}/${entry.summary.required.total}\n`);
+      for (const row of entry.failing) process.stdout.write(`      ${row.status} ${row.scenarioId} ${row.assertionId}: ${String(row.observed).slice(0, 200)}\n`);
+    }
+    if (result.summary.abortedAfter) process.stdout.write(`  ✕ aborted after ${result.summary.abortedAfter}: ${result.summary.abortReason}\n`);
+    process.stdout.write(`  report ${path.join(result.dir, 'report.md')}\n`);
+    if (result.summary.status !== 'PASS') process.exitCode = 2;
+    return;
+  }
   if (verb !== 'run' || !name) {
-    throw new Error('Usage: oak-chain mock campaign list | oak-chain mock campaign run <name> [--allow-class B] [--allow-live-root] [--runtime-root PATH] [--runs-dir PATH] [--accepted DIR] [--rounds N] [--terminal-seconds N] [--convergence-seconds N]');
+    throw new Error('Usage: oak-chain mock campaign list | suites | run <name> | suite <name> [--allow-class B,C] [--allow-live-root] [--runtime-root PATH] [--runs-dir PATH] [--accepted DIR] [--rounds N] [--terminal-seconds N] [--convergence-seconds N] [--recovery-seconds N]');
   }
   const result = await runCampaign(name, options, {
     log: (line) => process.stderr.write(`${line}\n`),
@@ -850,6 +873,8 @@ function printHelp() {
   println('  oak-chain mock console [--runtime-root PATH] [--cluster-size 3|5] [--lifecycle-dir PATH] [--once]');
   println('  oak-chain mock campaign list');
   println('  oak-chain mock campaign run <name> [--allow-class B] [--allow-live-root] [--runtime-root PATH] [--runs-dir PATH] [--accepted DIR] [--rounds N] [--terminal-seconds N] [--convergence-seconds N]');
+  println('  oak-chain mock campaign suites');
+  println('  oak-chain mock campaign suite <name> --runtime-root PATH --allow-class B,C [--runs-dir PATH] [--recovery-seconds N]');
   println('  oak-chain tx key|write|delete|verify ...   Conformant signed transactions (modes/mock/TRANSACTION-CONTRACT.md)');
   println('  oak-chain mock verify smoke|binary|surfaces-single [--dry-run] [-- <script args...>]');
   println('  oak-chain lab 3x2 up|down|status [--dry-run] [-- <script args...>]');

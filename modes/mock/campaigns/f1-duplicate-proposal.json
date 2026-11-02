@@ -1,0 +1,8 @@
+{
+  "id": "f1-duplicate-proposal",
+  "title": "F1-05 duplicate proposal ID: resent after and during its terminal outcome, one logical effect",
+  "riskClass": "B",
+  "charter": ["F1-05"],
+  "scenario": "duplicate-proposal",
+  "params": { "terminalSeconds": 90, "convergenceSeconds": 60 }
+}

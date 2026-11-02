@@ -1,0 +1,20 @@
+{
+  "id": "rebaseline",
+  "title": "Charter re-baseline: provenance, functional, convergence, single faults, quorum envelope, full restarts",
+  "description": "Runs the consensus charter phases 0-4 and 6 against one disposable cluster in order, into one evidence directory with one report. Needs --allow-class B,C and a disposable --runtime-root.",
+  "campaigns": [
+    "p0-preflight",
+    "f1-one-write",
+    "f1-mixed-batch",
+    "f1-duplicate-proposal",
+    "o2-convergence",
+    "s3-follower-term",
+    "s3-follower-kill",
+    "s3-leader-term",
+    "s3-leader-kill",
+    "q4-quorum-envelope",
+    "r6-restart-graceful",
+    "r6-restart-hard",
+    "o2-convergence"
+  ]
+}

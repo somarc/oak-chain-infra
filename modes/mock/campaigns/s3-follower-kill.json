@@ -1,0 +1,8 @@
+{
+  "id": "s3-follower-kill",
+  "title": "S3-02 follower KILL: writes commit with a majority, the crashed follower recovers and converges",
+  "riskClass": "C",
+  "charter": ["S3-02"],
+  "scenario": "follower-fault",
+  "params": { "mode": "kill", "writes": 5, "terminalSeconds": 90, "convergenceSeconds": 60, "recoverySeconds": 180 }
+}

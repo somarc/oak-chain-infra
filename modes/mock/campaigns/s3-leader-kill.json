@@ -1,0 +1,8 @@
+{
+  "id": "s3-leader-kill",
+  "title": "S3-05 leader KILL with writes in flight: outcomes explainable from state, same-ID retry has one effect",
+  "riskClass": "C",
+  "charter": ["S3-05", "D5-05"],
+  "scenario": "leader-fault",
+  "params": { "mode": "kill", "writesBefore": 3, "inFlight": 6, "electionSeconds": 90, "terminalSeconds": 90, "convergenceSeconds": 60, "recoverySeconds": 180 }
+}
