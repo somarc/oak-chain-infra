@@ -52,6 +52,8 @@ Validator-only local operations for Oak Chain mock mode.
 - `debug/run-validator-node.sh`
   - Runs one validator node directly for focused debugging.
   - `OAK_CONSENSUS_JAR=/abs/path.jar` runs that exact jar instead of the workspace search (which is otherwise unchanged) and prints its sha256; `OAK_CONSENSUS_JAR_SHA256` refuses the jar if its content changed. `start-cluster.sh` hashes it once, passes the hash to every member and stores path and hash in the launch record, so `member.sh` restarts the same jar and refuses another one.
+- Attaching a Java debugger
+  - There is no separate debug launcher. Pass JDWP through `EXTRA_JAVA_OPTS`, bound to loopback, to one member: `EXTRA_JAVA_OPTS='-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=127.0.0.1:5005' ./lifecycle/member.sh restart 1`. A member restart is a class C action: on the protected live root it needs explicit approval (charter §3.2). Your environment's `EXTRA_JAVA_OPTS` replaces the recorded one for that start, so on a sharded cluster include the recorded sharding flags too. Never bind JDWP to `*`.
 - `monitoring/validator-failure-watchdog.sh`
   - Polls validator health and captures post-mortem bundles when a validator transitions from UP to DOWN.
   - Post-mortem output path:
