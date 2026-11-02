@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-LIFECYCLE_DIR="$BASE_DIR/lifecycle"
+LIFECYCLE_DIR="${LIFECYCLE_DIR:-$BASE_DIR/lifecycle}"  # sepolia exports its own
 
 PID_DIR="${PID_DIR:-$HOME/oak-chain/pids}"
 LOG_DIR="${LOG_DIR:-$HOME/oak-chain/logs}"

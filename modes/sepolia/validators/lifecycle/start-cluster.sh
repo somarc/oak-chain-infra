@@ -3,9 +3,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VALIDATOR_SCRIPT="$SCRIPT_DIR/../debug/run-validator-node.sh"
-PREVENT_SLEEP_SCRIPT="$SCRIPT_DIR/prevent-sleep.sh"
-WATCHDOG_SCRIPT="$SCRIPT_DIR/../monitoring/validator-failure-watchdog.sh"
-LOAD_OBSERVER_SCRIPT="$SCRIPT_DIR/../monitoring/load-bottleneck-observer.sh"
+# Monitoring and prevent-sleep are shared with mock mode; the watchdog calls this mode's status-cluster.sh.
+MOCK_VALIDATORS_DIR="$SCRIPT_DIR/../../../mock/validators"
+PREVENT_SLEEP_SCRIPT="$MOCK_VALIDATORS_DIR/lifecycle/prevent-sleep.sh"
+WATCHDOG_SCRIPT="$MOCK_VALIDATORS_DIR/monitoring/validator-failure-watchdog.sh"
+LOAD_OBSERVER_SCRIPT="$MOCK_VALIDATORS_DIR/monitoring/load-bottleneck-observer.sh"
+export LIFECYCLE_DIR="$SCRIPT_DIR"
 PID_DIR="${PID_DIR:-$HOME/oak-chain/pids}"
 LOG_DIR="${LOG_DIR:-$HOME/oak-chain/logs}"
 OAK_ROOT="$(cd "$SCRIPT_DIR/../../../../.." && pwd)"

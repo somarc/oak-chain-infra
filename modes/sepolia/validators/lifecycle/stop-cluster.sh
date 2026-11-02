@@ -3,9 +3,12 @@ set -euo pipefail
 
 PID_DIR="${PID_DIR:-$HOME/oak-chain/pids}"
 OPS_PROXY_PID_FILE="$PID_DIR/ops-proxy.pid"
-PREVENT_SLEEP_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/prevent-sleep.sh"
-WATCHDOG_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../monitoring/validator-failure-watchdog.sh"
-LOAD_OBSERVER_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../monitoring/load-bottleneck-observer.sh"
+# Monitoring and prevent-sleep are shared with mock mode; the watchdog calls this mode's status-cluster.sh.
+export LIFECYCLE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MOCK_VALIDATORS_DIR="$LIFECYCLE_DIR/../../../mock/validators"
+PREVENT_SLEEP_SCRIPT="$MOCK_VALIDATORS_DIR/lifecycle/prevent-sleep.sh"
+WATCHDOG_SCRIPT="$MOCK_VALIDATORS_DIR/monitoring/validator-failure-watchdog.sh"
+LOAD_OBSERVER_SCRIPT="$MOCK_VALIDATORS_DIR/monitoring/load-bottleneck-observer.sh"
 CLUSTER_SIZE="${OAK_CLUSTER_SIZE:-}"
 NODES=()
 HTTP_PORTS=()
