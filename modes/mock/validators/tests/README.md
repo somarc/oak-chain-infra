@@ -14,7 +14,7 @@ evidence contract.
 ## Layout
 
 - `lib/`
-  - Shared cluster helpers used by the focused stability tests.
+  - Shared helpers: `_cluster_test_lib.sh` (focused stability tests), `_sharding_health_lib.sh` (routing smokes, `proposal-surfaces-3x2.sh`), `_surfaces_lib.sh` (proposal-surface suites).
 - `smoke/`
   - Cheap control-plane and schema sanity checks.
 - `routing/`
