@@ -186,68 +186,105 @@ function context(base, params) {
 // alive and serve /health for a short stability window; if it exits, record why (the tail of its
 // log) and relaunch after a backoff until the recovery deadline. member.sh start reports success
 // once the JVM is launched, so its exit code alone never counts as recovery.
-async function lastError(ctx, id) {
+const validatorLog = (ctx, id) => `${ctx.target.logDir}/validator-${id}.log`;
+
+async function logSize(ctx, id) {
   try {
-    const { readFile } = await import('node:fs/promises');
-    const text = await readFile(`${ctx.target.logDir}/validator-${id}.log`, 'utf8');
-    const lines = text.split('\n').slice(-400);
-    const cause = [...lines].reverse().find((line) => /Caused by|ERROR/.test(line));
-    return cause ? cause.replace(/^.*?(Caused by|ERROR)/, '$1').slice(0, 300) : null;
+    const { stat } = await import('node:fs/promises');
+    return (await stat(validatorLog(ctx, id))).size;
+  } catch (_error) {
+    return 0;
+  }
+}
+
+// The first error the attempt wrote: only the log written since `fromOffset` is read, so a crash
+// from an earlier start is never blamed on this one.
+async function lastError(ctx, id, fromOffset = 0) {
+  try {
+    const { open } = await import('node:fs/promises');
+    const handle = await open(validatorLog(ctx, id), 'r');
+    try {
+      const { size } = await handle.stat();
+      const length = Math.max(0, size - fromOffset);
+      const buffer = Buffer.alloc(Math.min(length, 2_000_000));
+      await handle.read(buffer, 0, buffer.length, fromOffset);
+      const lines = buffer.toString('utf8').split('\n');
+      const cause = lines.find((line) => /Caused by/.test(line)) ?? lines.find((line) => /\bERROR\b/.test(line));
+      return cause ? cause.replace(/^.*?(Caused by|ERROR)/, '$1').slice(0, 300) : null;
+    } finally {
+      await handle.close();
+    }
   } catch (_error) {
     return null;
   }
 }
 
-async function restartMember(ctx, scenarioId, id, { deadlineMs = ctx.recoveryMs, stableMs = 5_000, backoffMs = 5_000 } = {}) {
-  const node = ctx.target.nodes[id];
+// Start members the way a process supervisor would: launch every member of the group first (a
+// validator opens HTTP only once its Aeron cluster has formed, so a lone member of a stopped
+// cluster cannot come up by itself), then wait for each to stay alive and serve /health for a
+// stability window. A member whose process exits is logged with the reason from its log and
+// relaunched after a backoff, until the recovery deadline. member.sh start reports success once
+// the JVM is launched, so its exit code alone never counts as recovery.
+async function restartMembers(ctx, scenarioId, ids, { deadlineMs = ctx.recoveryMs, stableMs = 5_000, backoffMs = 5_000 } = {}) {
   const started = Date.now();
-  const attempts = [];
-  let recovered = false;
-  while (!recovered && Date.now() - started <= deadlineMs) {
+  const state = new Map(ids.map((id) => [id, { attempts: [], pid: null, recovered: false, retryAt: 0, upSince: null }]));
+  const launch = async (id) => {
+    const entry = state.get(id);
+    const logOffset = await logSize(ctx, id);
     const start = await ctx.faults.member('start', id);
-    const attempt = { exitCode: start.exitCode, pid: start.pidAfter, startedAfterMs: Date.now() - started };
-    attempts.push(attempt);
-    if (start.exitCode === 0 && start.pidAfter) {
-      let upSince = null;
-      const attemptDeadline = Math.min(started + deadlineMs, Date.now() + 120_000);
-      while (Date.now() <= attemptDeadline) {
-        const proc = await processState(node);
-        if (proc.pid !== start.pidAfter) break;
-        const health = await ctx.http.request(`${node.url}/health`, { timeout: 2_000 });
-        if (health.status === 200) {
-          upSince ??= Date.now();
-          if (Date.now() - upSince >= stableMs) {
-            recovered = true;
-            break;
-          }
-        } else {
-          upSince = null;
+    entry.attempts.push({ exitCode: start.exitCode, logOffset, pid: start.pidAfter, startedAfterMs: Date.now() - started });
+    entry.pid = start.pidAfter;
+    entry.upSince = null;
+  };
+  for (const id of ids) await launch(id);
+  while (Date.now() - started <= deadlineMs && [...state.values()].some((entry) => !entry.recovered)) {
+    for (const id of ids) {
+      const entry = state.get(id);
+      if (entry.recovered) continue;
+      const node = ctx.target.nodes[id];
+      const proc = await processState(node);
+      if (!entry.pid || proc.pid !== entry.pid) {
+        if (!entry.retryAt) {
+          const attempt = entry.attempts.at(-1);
+          attempt.exitedWith = await lastError(ctx, id, attempt.logOffset);
+          await ctx.run.event('member.start.failed', { attempt: entry.attempts.length, member: id, ...attempt });
+          entry.retryAt = Date.now() + backoffMs;
+        } else if (Date.now() >= entry.retryAt) {
+          entry.retryAt = 0;
+          await launch(id);
         }
-        await sleep(1_000);
+        continue;
+      }
+      const health = await ctx.http.request(`${node.url}/health`, { timeout: 2_000 });
+      if (health.status === 200) {
+        entry.upSince ??= Date.now();
+        if (Date.now() - entry.upSince >= stableMs) entry.recovered = true;
+      } else {
+        entry.upSince = null;
       }
     }
-    if (!recovered) {
-      attempt.exitedWith = await lastError(ctx, id);
-      await ctx.run.event('member.start.failed', { attempt: attempts.length, member: id, ...attempt });
-      if (Date.now() - started + backoffMs > deadlineMs) break;
-      await sleep(backoffMs);
-    }
+    await sleep(1_000);
   }
-  ctx.run.assert({
-    assertionId: `member-${id}.recovered`, evidence: 'timeline.ndjson',
-    expected: `member ${id} running and serving /health for ${stableMs / 1_000}s within ${deadlineMs / 1_000}s, restarted on exit like a supervisor would`,
-    observed: `${recovered ? 'up' : 'not up'} after ${attempts.length} start attempt(s), ${Date.now() - started}ms`,
-    scenarioId, status: pass(recovered),
-  });
-  ctx.run.assert({
-    assertionId: `member-${id}.first-start`, evidence: 'timeline.ndjson', kind: 'diagnostic',
-    expected: `the first start after the fault stays up (no crash loop)`,
-    observed: attempts.length === 1 && recovered ? 'first start stayed up'
-      : `${attempts.length} attempts; first exited: ${brief(attempts[0]?.exitedWith ?? 'unknown', 240)}`,
-    scenarioId, status: pass(recovered && attempts.length === 1),
-  });
-  return { attempts, recovered };
+  for (const id of ids) {
+    const entry = state.get(id);
+    ctx.run.assert({
+      assertionId: `member-${id}.recovered`, evidence: 'timeline.ndjson',
+      expected: `member ${id} running and serving /health for ${stableMs / 1_000}s within ${deadlineMs / 1_000}s, relaunched on exit like a supervisor would`,
+      observed: `${entry.recovered ? 'up' : 'not up'} after ${entry.attempts.length} start attempt(s), ${Date.now() - started}ms`,
+      scenarioId, status: pass(entry.recovered),
+    });
+    ctx.run.assert({
+      assertionId: `member-${id}.first-start`, evidence: 'timeline.ndjson', kind: 'diagnostic',
+      expected: 'the first start after the fault stays up (no crash loop)',
+      observed: entry.attempts.length === 1 && entry.recovered ? 'first start stayed up'
+        : `${entry.attempts.length} attempts; first exited: ${brief(entry.attempts[0]?.exitedWith ?? 'did not exit', 240)}`,
+      scenarioId, status: pass(entry.recovered && entry.attempts.length === 1),
+    });
+  }
+  return state;
 }
+
+const restartMember = (ctx, scenarioId, id, options) => restartMembers(ctx, scenarioId, [id], options);
 
 async function injectStop(ctx, scenarioId, id, mode) {
   const action = mode === 'kill' ? 'kill' : 'stop';
@@ -490,7 +527,7 @@ export async function quorumEnvelope(base, params) {
   });
 
   // Q4-03: restore every member; sentinel progress; the no-quorum write is resolved consistently.
-  for (const id of [lastStop, ...firstStops]) await restartMember(ctx, 'Q4-03', id);
+  await restartMembers(ctx, 'Q4-03', [lastStop, ...firstStops]);
   const post = await gateSettled(ctx, 'Q4-03', 'after-recovery', { deadlineMs: Number(params.recoverySeconds ?? 180) * 1_000 });
   if (!post.settled) return;
   const sentinel = await commitWrites(ctx, { count: 1, label: 'sentinel', organization, scenarioId: 'Q4-03', signer, visibleOn: all });
@@ -547,7 +584,7 @@ export async function clusterRestart(base, params) {
   });
   if (!downs.every((down) => down.down)) return;
 
-  for (const id of all) await restartMember(ctx, scenarioId, id);
+  await restartMembers(ctx, scenarioId, all);
   const post = await gateSettled(ctx, scenarioId, 'after-restart', { deadlineMs: Number(params.recoverySeconds ?? 180) * 1_000 });
   if (!post.settled) return;
   await assertFidelity(ctx, { label: 'after-restart', members: all, rows, scenarioId, signer });
