@@ -2,7 +2,8 @@
 //
 // A run always names its runtime root explicitly in the manifest. Anything above read-only
 // needs an explicit --allow-class, and the long-lived legacy root (~/oak-chain) additionally
-// needs --allow-live-root (charter §3.2).
+// needs --allow-live-root (charter §3.2). Controlled faults (class C) never run on the legacy
+// root: they signal validator processes, and §3.2 keeps that root free of faults.
 
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -48,7 +49,8 @@ export async function resolveTarget({ env = process.env, options = {}, repoRoot 
     ...config,
     isLegacyRoot: path.resolve(config.runtimeRoot) === path.resolve(legacyRoot),
     nodes,
-    oakRoot: path.resolve(repoRoot, '..'),
+    // The OAK workspace holding jackrabbit-oak; OAK_ROOT wins (a Studio worktree is not inside it).
+    oakRoot: path.resolve(env.OAK_ROOT || path.resolve(repoRoot, '..')),
     repoRoot,
   };
 }
@@ -56,8 +58,14 @@ export async function resolveTarget({ env = process.env, options = {}, repoRoot 
 export function authorizeRiskClass(target, riskClass, options = {}) {
   if (!RISK_CLASSES[riskClass]) throw new Error(`Unknown risk class ${riskClass}`);
   if (riskClass === 'A') return [];
-  if (riskClass === 'C' || riskClass === 'D') {
+  if (riskClass === 'D') {
     throw new Error(`Risk class ${riskClass} (${RISK_CLASSES[riskClass]}) campaigns are not available in this harness yet`);
+  }
+  if (riskClass === 'C' && target.isLegacyRoot) {
+    throw new Error(
+      `Risk class C (${RISK_CLASSES.C}) never runs on the long-lived legacy root ${target.runtimeRoot} (charter §3.2). `
+      + 'Launch a disposable cluster and target it with --runtime-root.',
+    );
   }
   const allowed = String(options['allow-class'] ?? '').toUpperCase().split(/[,\s]+/).filter(Boolean);
   if (!allowed.includes(riskClass)) {
@@ -104,13 +112,21 @@ function sha256File(file) {
   });
 }
 
-async function jarState(jarPath) {
+async function jarState(jarPath, extra = {}) {
   try {
     const info = await stat(jarPath);
-    return { mtime: info.mtime.toISOString(), mtimeMs: info.mtimeMs, path: jarPath, sha256: await sha256File(jarPath), size: info.size };
+    return { ...extra, mtime: info.mtime.toISOString(), mtimeMs: info.mtimeMs, path: jarPath, sha256: await sha256File(jarPath), size: info.size };
   } catch (error) {
-    return { error: error.code ?? error.message, path: jarPath };
+    return { ...extra, error: error.code ?? error.message, path: jarPath };
   }
+}
+
+// The jar the cluster was launched with: the launch record's OAK_CONSENSUS_JAR override when
+// start-cluster.sh recorded one, else the workspace build every member falls back to.
+export function launchedJarPath(target) {
+  const recorded = target.launch?.OAK_CONSENSUS_JAR;
+  if (recorded) return { path: recorded, recordedSha256: target.launch?.OAK_CONSENSUS_JAR_SHA256 || null, source: 'launch record' };
+  return { path: path.join(target.oakRoot, 'jackrabbit-oak/oak-segment-consensus/target/oak-segment-consensus.jar'), recordedSha256: null, source: 'workspace build' };
 }
 
 export async function processState(node) {
@@ -137,6 +153,28 @@ export async function processState(node) {
   return result;
 }
 
+// Which jackrabbit-oak source the cluster runs. A pinned jar's `<jar>.provenance` sidecar
+// ("source=<commit> dirtyFiles=<n> branch=<b>", written when the jar is staged) names the exact
+// commit it was built from; without one, fall back to the workspace checkout.
+export function parseJarProvenance(text) {
+  const fields = Object.fromEntries(String(text ?? '').trim().split(/\s+/).map((pair) => pair.split('=')).filter(([key, value]) => key && value !== undefined));
+  if (!/^[0-9a-f]{7,40}$/.test(fields.source ?? '')) return null;
+  return { branch: fields.branch ?? null, dirtyCount: Number(fields.dirtyFiles ?? NaN), head: fields.source };
+}
+
+async function runtimeSource(target) {
+  const { path: jarPath, source } = launchedJarPath(target);
+  if (source === 'launch record') {
+    try {
+      const parsed = parseJarProvenance(await readFile(`${jarPath}.provenance`, 'utf8'));
+      if (parsed) return { ...parsed, from: 'jar provenance', path: `${jarPath}.provenance` };
+    } catch (_error) {
+      // no sidecar: fall through to the checkout
+    }
+  }
+  return { ...(await gitState(path.join(target.oakRoot, 'jackrabbit-oak'))), from: 'workspace checkout' };
+}
+
 export async function captureProvenance(target, { env = process.env } = {}) {
   const java = await quiet('java', ['-version']);
   const environment = Object.fromEntries(
@@ -153,9 +191,13 @@ export async function captureProvenance(target, { env = process.env } = {}) {
       node: process.version,
       os: `${os.type()} ${os.release()}`,
     },
-    jar: await jarState(path.join(target.oakRoot, 'jackrabbit-oak/oak-segment-consensus/target/oak-segment-consensus.jar')),
+    jar: await (async () => {
+      const { path: jarPath, recordedSha256, source } = launchedJarPath(target);
+      const state = await jarState(jarPath, { recordedSha256, source });
+      return { ...state, matchesLaunchRecord: recordedSha256 && state.sha256 ? state.sha256 === recordedSha256 : null };
+    })(),
     repos: {
-      jackrabbitOak: await gitState(path.join(target.oakRoot, 'jackrabbit-oak')),
+      jackrabbitOak: await runtimeSource(target),
       oakChainInfra: await gitState(target.repoRoot),
     },
     environment,

@@ -9,7 +9,7 @@ import { classifyOperation, harnessSigner, newProposalId, OUTCOME } from '../src
 import { recoverSigner } from '../src/tx.mjs';
 import { createRun, STATUS, summarize } from '../src/harness/evidence.mjs';
 import { createHttp, normalizeNodeUrl } from '../src/harness/http.mjs';
-import { formatSummary, listCampaigns, runCampaign } from '../src/harness/index.mjs';
+import { formatSummary, listCampaigns, listSuites, loadCampaign, loadSuite, runCampaign } from '../src/harness/index.mjs';
 import { compareAcrossNodes, compareExpected } from '../src/harness/oracle.mjs';
 import { authorizeRiskClass } from '../src/harness/target.mjs';
 
@@ -150,7 +150,10 @@ test('risk classes: writes need explicit approval, the legacy root needs a secon
   assert.deepEqual(authorizeRiskClass(disposable, 'B', { 'allow-class': 'B' }), ['class B']);
   assert.throws(() => authorizeRiskClass(legacy, 'B', { 'allow-class': 'B' }), /--allow-live-root/);
   assert.deepEqual(authorizeRiskClass(legacy, 'B', { 'allow-class': 'b', 'allow-live-root': true }), ['class B', 'live legacy root']);
-  assert.throws(() => authorizeRiskClass(disposable, 'C', { 'allow-class': 'C' }), /not available/);
+  assert.throws(() => authorizeRiskClass(disposable, 'C', {}), /--allow-class C/);
+  assert.deepEqual(authorizeRiskClass(disposable, 'C', { 'allow-class': 'B,C' }), ['class C']);
+  assert.throws(() => authorizeRiskClass(legacy, 'C', { 'allow-class': 'C', 'allow-live-root': true }), /never runs on the long-lived legacy root/);
+  assert.throws(() => authorizeRiskClass(disposable, 'D', { 'allow-class': 'D' }), /not available/);
 });
 
 test('http client follows 307 keeping method and body, and reports transport failure as status 0', async () => {
@@ -170,10 +173,18 @@ test('http client follows 307 keeping method and body, and reports transport fai
 
 test('campaign definitions are well-formed and name known scenarios', async () => {
   const campaigns = await listCampaigns(repoRoot);
-  assert.deepEqual(campaigns.map((campaign) => campaign.id).sort(), ['f1-mixed-batch', 'f1-one-write', 'p0-preflight', 'reconcile-accepted']);
+  assert.deepEqual(campaigns.map((campaign) => campaign.id).sort(), [
+    'f1-duplicate-proposal', 'f1-mixed-batch', 'f1-one-write', 'o2-convergence', 'p0-preflight', 'q4-quorum-envelope',
+    'r6-restart-graceful', 'r6-restart-hard', 'reconcile-accepted', 's3-follower-kill', 's3-follower-term', 's3-leader-kill', 's3-leader-term',
+  ]);
   for (const campaign of campaigns) {
-    assert.match(campaign.riskClass, /^[AB]$/);
+    assert.match(campaign.riskClass, /^[ABC]$/);
     assert.ok(campaign.charter.length > 0);
+    await loadCampaign(repoRoot, campaign.id); // names a known scenario
+  }
+  for (const suite of await listSuites(repoRoot)) {
+    const { campaigns: members } = await loadSuite(repoRoot, suite.id);
+    assert.equal(members.length, suite.campaigns.length, `${suite.id} names only known campaigns`);
   }
 });
 

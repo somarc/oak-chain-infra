@@ -75,7 +75,9 @@ async function submitSigned(http, target, run, { endpoint, form, kind, leaderUrl
     storagePath: response.json?.storagePath ?? record.storagePath ?? null,
   };
   await run.appendLedger(row);
-  return row;
+  // The signed form travels with the returned row (not the ledger, which already holds the
+  // signature) so a scenario can resend the identical proposal: resubmit() below.
+  return { ...row, endpoint, form };
 }
 
 export async function submitWrite(http, target, run, { contentType = 'page', leaderUrl, message, organization, proposalId = newProposalId(), signer }) {
@@ -87,6 +89,19 @@ export async function submitWrite(http, target, run, { contentType = 'page', lea
 export async function submitDelete(http, target, run, { contentPath, leaderUrl, proposalId = newProposalId(), signer }) {
   const form = buildDelete({ contentPath, key: signer.privateKey, proposalId });
   return submitSigned(http, target, run, { endpoint: '/v1/propose-delete', form, kind: 'delete', leaderUrl, record: { storagePath: contentPath } });
+}
+
+// Resend a proposal byte for byte (same proposalId, same signature) — charter F1-05/D5-05:
+// a proposal must have one logical effect however often it arrives. The ledger row records it
+// as a retry of the original attempt.
+export async function resubmit(http, target, run, original, { leaderUrl } = {}) {
+  if (!original?.form || !original.endpoint) throw new Error('resubmit needs a row returned by submitWrite/submitDelete');
+  const record = original.kind === 'delete'
+    ? { retryOf: original.proposalId, storagePath: original.storagePath }
+    : { message: original.message, organization: original.organization, retryOf: original.proposalId };
+  const row = await submitSigned(http, target, run, { endpoint: original.endpoint, form: original.form, kind: original.kind, leaderUrl, record });
+  // A retried write answers with the path its own (new) contentId would get; keep both.
+  return { ...row, originalStoragePath: original.storagePath };
 }
 
 // The runtime reads no signature on registration (RegistrationHandler); it maps clientId to
